@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+ml/runs/
+ml/checkpoints/
+
+# Data (downloaded datasets — see docs/data.md for sources)
+data/
+
+# Node
+node_modules/
+web/dist/
+
+# Misc
+.DS_Store
+*.log
