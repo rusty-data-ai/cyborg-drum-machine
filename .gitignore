@@ -16,3 +16,4 @@ web/dist/
 # Misc
 .DS_Store
 *.log
+web/public/ort/

@@ -85,7 +85,9 @@ class OnsetProcessor extends AudioWorkletProcessor {
     // Rolling PCM ring buffer (2 s) for segment extraction.
     this.ringSize = Math.ceil(sampleRate * 2);
     this.ring = new Float32Array(this.ringSize);
-    this.absPos = 0; // absolute sample counter since processor start
+    // Absolute sample position on the AudioContext clock (so onset times are
+    // directly comparable with ctx.currentTime — needed for metronome mode).
+    this.absPos = -1;
 
     // Frame assembly for STFT.
     this.frameBuf = new Float32Array(FFT_SIZE);
@@ -114,6 +116,9 @@ class OnsetProcessor extends AudioWorkletProcessor {
     const input = inputs[0];
     if (!input || !input[0]) return true;
     const ch = input[0];
+    // Re-anchor to the context clock each block (robust to suspend/resume gaps).
+    this.absPos = currentFrame;
+    if (this.levelNext < this.absPos) this.levelNext = this.absPos + this.levelEvery;
 
     for (let i = 0; i < ch.length; i++) {
       const s = ch[i];

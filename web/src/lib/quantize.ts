@@ -14,6 +14,8 @@ import { emptyPattern } from './types';
 export interface QuantizeOptions {
   /** If set (metronome mode), skip tempo estimation. */
   knownBpm?: number;
+  /** Grid origin for metronome mode: AudioContext time of the downbeat. */
+  origin?: number;
   minBpm?: number;
   maxBpm?: number;
 }
@@ -76,7 +78,7 @@ export function quantizeHits(hits: ClassifiedHit[], opts: QuantizeOptions = {}):
 
   let tempo: TempoEstimate;
   if (opts.knownBpm) {
-    tempo = { bpm: opts.knownBpm, origin: Math.min(...times), gridFit: 1 };
+    tempo = { bpm: opts.knownBpm, origin: opts.origin ?? Math.min(...times), gridFit: 1 };
   } else {
     tempo = estimateTempo(times, weights, opts.minBpm, opts.maxBpm);
   }
