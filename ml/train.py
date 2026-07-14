@@ -102,6 +102,9 @@ def main() -> None:
     w = torch.tensor(
         [1.0 / np.sqrt(counts[c]) for c in CLASSES], dtype=torch.float32, device=device
     )
+    # Damp the rejection class: false-rejecting a real drum hit costs the user
+    # more than letting a breath through (round 2 leaked 78 kicks into 'other').
+    w[CLASSES.index("other")] *= 0.6
     w = w / w.mean()
 
     model = BeatboxNet(len(CLASSES), len(vocab)).to(device)

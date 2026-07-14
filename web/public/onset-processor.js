@@ -19,7 +19,7 @@
 const FFT_SIZE = 512;
 const HOP = 256;
 const SEGMENT_PRE = 0.04; // s of audio kept before the onset
-const SEGMENT_POST = 0.21; // s of audio after the onset
+const SEGMENT_POST = 0.31; // s of audio after the onset (matches ml/ patch window)
 const MIN_GAP = 0.06; // s minimum between onsets
 const FLUX_WINDOW = 40; // frames (~0.21 s @ 48k/256) for adaptive stats
 const LOOKAHEAD = 3; // frames each side for local-max test

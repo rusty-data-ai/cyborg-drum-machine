@@ -17,10 +17,12 @@ import soundfile as sf
 import torch
 from torch.utils.data import Dataset
 
-SAMPLE_RATE = 16_000
+# 22.05 kHz keeps sibilance up to ~11 kHz (open/closed hat separation);
+# 350 ms window captures open-hat decay tails (literature uses ~384 ms).
+SAMPLE_RATE = 22_050
 PATCH_PRE_S = 0.04
-PATCH_POST_S = 0.21
-PATCH_LEN = int(SAMPLE_RATE * (PATCH_PRE_S + PATCH_POST_S))  # 4000
+PATCH_LEN = 7712  # ≈350 ms; (7712-512)/128 gives whole STFT frames
+PATCH_POST_S = PATCH_LEN / SAMPLE_RATE - PATCH_PRE_S
 
 CLASSES = ["kick", "snare", "hihat_closed", "hihat_open", "other"]
 CLASS_TO_IDX = {c: i for i, c in enumerate(CLASSES)}
@@ -33,12 +35,12 @@ BBX_LABEL_MAP = {
     "s": "snare",
     "sk": "snare",
     "sb": "snare",
-    # breaths, humming, unclear, tongue clicks etc. -> rejection class
+    # breaths, humming, speech, misc mouth sounds -> rejection class
+    # ('t' is undocumented and '?' means annotator-unsure: both dropped)
     "br": "other",
     "m": "other",
+    "v": "other",
     "x": "other",
-    "t": "other",
-    "hum": "other",
 }
 
 # Some AVP CSVs have glued rows ("0.63,kd0.95,sd") and stray whitespace; regex-parse.
@@ -209,8 +211,10 @@ class PatchDataset(Dataset):
     def _augment_wave(self, audio: np.ndarray, onset_s: float) -> np.ndarray:
         rng = self.rng
         jitter = rng.uniform(-0.01, 0.01)
-        # Random speed (correlated pitch+tempo, kaldi-style): resample the local region.
-        speed = rng.uniform(0.85, 1.18)
+        # Random speed (correlated pitch+tempo, kaldi-style): resample the local
+        # region. Narrow range — time-stretch directly blurs the open/closed-hat
+        # decay-length boundary.
+        speed = rng.uniform(0.93, 1.08)
         # Extract a larger region, resample, then cut the patch.
         span = PATCH_LEN * 2
         start = int((onset_s - PATCH_PRE_S) * SAMPLE_RATE) - PATCH_LEN // 2

@@ -30,8 +30,8 @@ All datasets live under `data/` (gitignored). Re-download with `ml/download_data
   (Stowell, QMUL). Training use only; its audio is not shipped in the app.
 - 14 recordings from humanbeatbox.com users; two annotator sets (`Annotations_DR`, `Annotations_HT`),
   CSV `onset,label`. Label map used: `k→kick, hc→hihat_closed, ho→hihat_open, s/sk/sb→snare,
-  br/m/x/t/hum→other`. The `other` events (breaths, misc mouth noises, ~2k) train the
-  rejection class.
+  br/m/v/x→other` (breaths, humming, speech, misc — trains the rejection class).
+  Dropped: `t` (undocumented in the dataset's legend) and `?` (annotator unsure).
 
 ## App playback samples
 
