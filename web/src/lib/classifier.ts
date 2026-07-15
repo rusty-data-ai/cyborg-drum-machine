@@ -21,6 +21,12 @@ export interface ModelMeta {
   patchLen: number;
   patchPreS: number;
   embeddingDim: number;
+  /**
+   * Optional ONNX filename (e.g. "beatbox-v3.onnx"). Deployed .onnx files are
+   * cached as immutable (see docs/deployment.md), so a retrained model must
+   * ship under a new name, referenced from this always-revalidated manifest.
+   */
+  file?: string;
 }
 
 const DEFAULT_CONFIDENCE_FLOOR = 0.4;
@@ -53,7 +59,7 @@ export class HitClassifier {
     ort.env.wasm.numThreads = 1; // tiny model: threads buy nothing, SAB costs COOP/COEP
     const metaRes = await fetch(`${baseUrl}/beatbox.json`);
     this.meta = (await metaRes.json()) as ModelMeta;
-    this.session = await ort.InferenceSession.create(`${baseUrl}/beatbox.onnx`, {
+    this.session = await ort.InferenceSession.create(`${baseUrl}/${this.meta.file ?? 'beatbox.onnx'}`, {
       executionProviders: ['wasm'],
     });
     await this.profile.load(this.meta.version);

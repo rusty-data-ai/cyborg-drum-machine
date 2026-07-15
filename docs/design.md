@@ -109,9 +109,12 @@ constants; `web/src/lib/settings.ts` clamps and survives junk in storage.
 
 ## Deployment
 
-Static site (Vite build): any static host (Netlify/Vercel/GitHub Pages). Requirements:
-HTTPS (getUserMedia), correct MIME for `.wasm` and `.onnx`, long-cache headers for model +
-samples. No server, no COOP/COEP needed (single-threaded WASM, no SharedArrayBuffer).
+Static site (Vite build): any static host works; Cloudflare Pages is the chosen one —
+see `docs/deployment.md` for the provider comparison, caching/model-versioning strategy,
+and runbook. Requirements: HTTPS (getUserMedia), correct MIME for `.wasm` and `.onnx`,
+long-cache headers for model + samples. No server, no COOP/COEP needed (single-threaded
+WASM, no SharedArrayBuffer). Beat sharing is zero-backend: the pattern is a versioned
+binary in the URL fragment (`web/src/lib/share.ts`).
 
 ## Risks / open questions
 

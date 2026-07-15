@@ -1,0 +1,37 @@
+# Cloudflare Pages / Netlify header rules (see docs/deployment.md).
+# Rules are non-overlapping on Cache-Control: overlapping matches would
+# comma-join values on Cloudflare Pages.
+
+# Vite content-hashed bundles (JS, CSS, and the 13.5 MB ort wasm): forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Model weights are immutable BY CONVENTION: a retrained model must ship under
+# a new filename (beatbox-v3.onnx, …) referenced from beatbox.json's "file".
+# Never overwrite a deployed .onnx in place — caches would mask it for a year.
+/models/*.onnx
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Type: application/octet-stream
+
+# Tiny model manifest — always revalidated so a new model version/filename
+# (and the KNN-profile invalidation it triggers) is picked up promptly.
+/models/beatbox.json
+  Cache-Control: public, no-cache
+
+# Parity-test fixtures: only e2e reads these.
+/models/fixtures.json
+  Cache-Control: public, max-age=86400
+
+# Unhashed TR-808 samples: a week in cache, then cheap ETag revalidation.
+/drums/*
+  Cache-Control: public, max-age=604800
+
+# AudioWorklet module is unhashed and changes with app code — revalidate.
+/onset-processor.js
+  Cache-Control: public, no-cache
+
+/index.html
+  Cache-Control: public, no-cache
+
+/
+  Cache-Control: public, no-cache

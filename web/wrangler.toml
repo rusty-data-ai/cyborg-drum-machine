@@ -1,0 +1,5 @@
+# Cloudflare Pages project config — `npx wrangler pages deploy` from web/
+# picks up the project name and output dir from here (docs/deployment.md).
+name = "cyborg-drum-machine"
+compatibility_date = "2026-07-01"
+pages_build_output_dir = "dist"

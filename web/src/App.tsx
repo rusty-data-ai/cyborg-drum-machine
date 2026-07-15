@@ -10,6 +10,7 @@ import { startMetronome, type MetronomeHandle } from './lib/metronome';
 import { MicEngine, type SegmentEvent } from './lib/micEngine';
 import { quantizeHits } from './lib/quantize';
 import { Sequencer } from './lib/sequencer';
+import { patternFromHash, patternToShareUrl } from './lib/share';
 import {
   loadSettings,
   saveSettings,
@@ -22,6 +23,9 @@ import { DRUM_CLASSES, emptyPattern } from './lib/types';
 const MAX_RECORD_S = 20;
 const SILENCE_STOP_S = 2.4;
 
+// A shared beat arrives in the URL fragment — decoded locally, never sent anywhere.
+const sharedPattern = patternFromHash(window.location.hash);
+
 type Tab = 'play' | 'teach';
 
 export default function App() {
@@ -29,8 +33,9 @@ export default function App() {
   const [modelError, setModelError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [pattern, setPattern] = useState<Pattern>(emptyPattern());
-  const [hasPattern, setHasPattern] = useState(false);
+  const [pattern, setPattern] = useState<Pattern>(sharedPattern ?? emptyPattern());
+  const [hasPattern, setHasPattern] = useState(sharedPattern !== null);
+  const [shareCopied, setShareCopied] = useState(false);
   const [playhead, setPlayhead] = useState(-1);
   const [level, setLevel] = useState(0);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -339,6 +344,19 @@ export default function App() {
     setTab(t);
   };
 
+  const sharePattern = useCallback(async () => {
+    const url = patternToShareUrl(patternRef.current, `${location.origin}${location.pathname}`);
+    // Put the link in the URL bar too, so it's shareable even if the clipboard is blocked.
+    history.replaceState(null, '', url);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1600);
+    } catch {
+      // clipboard denied — the URL bar still holds the link
+    }
+  }, []);
+
   const clearPattern = () => {
     stopPlayback();
     setPattern((p) => emptyPattern(p.bpm, p.steps));
@@ -471,6 +489,14 @@ export default function App() {
             </label>
             <button className="btn subtle" onClick={clearPattern}>
               clear
+            </button>
+            <button
+              className="btn subtle"
+              onClick={() => void sharePattern()}
+              disabled={!hasPattern}
+              title="Copy a link that plays this beat"
+            >
+              {shareCopied ? 'copied ✓' : 'share'}
             </button>
             {classifierRef.current.profile.size > 0 && (
               <span className="profile-note">

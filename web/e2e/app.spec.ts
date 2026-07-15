@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { encodePattern } from '../src/lib/share';
+import { emptyPattern } from '../src/lib/types';
 
 /**
  * End-to-end smoke tests. The fake mic device plays a real AVP beatbox
@@ -80,6 +82,28 @@ test('record flow captures hits from the (fake) mic', async ({ page }) => {
   // Transcription should populate the grid and start looping playback.
   await expect(page.locator('.cell.on').first()).toBeVisible({ timeout: 4000 });
   await expect(page.locator('.cell.playhead').first()).toBeVisible({ timeout: 4000 });
+  expect(realErrors(errors)).toEqual([]);
+});
+
+test('shared beat loads from the URL fragment and share copies a link', async ({ page }) => {
+  const errors = collectErrors(page);
+  const pat = emptyPattern(120, 16);
+  for (const i of [0, 4, 8, 12]) pat.grid.kick[i] = 1;
+  pat.grid.snare[4] = 0.85;
+  await page.goto(`/#p=${encodePattern(pat)}`);
+
+  // Pattern materializes in the grid without any recording.
+  await expect(page.locator('.cell.on')).toHaveCount(5);
+  await expect(page.locator('.pattern-controls')).toContainText('tempo 120 bpm');
+
+  // Share round-trip: button copies a link that reproduces the same pattern.
+  await page.getByRole('button', { name: 'share' }).click();
+  await expect(page.getByRole('button', { name: /copied/ })).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain('#p=');
+  await page.goto('about:blank');
+  await page.goto(copied);
+  await expect(page.locator('.cell.on')).toHaveCount(5);
   expect(realErrors(errors)).toEqual([]);
 });
 

@@ -38,6 +38,8 @@ bash ml/download_data.sh
   Each example is a deletable chip; "test me" mode shows live predictions without storing.
 - **Clap and Tom pads** are KNN-only: the base model never saw them, so they join
   transcription once you teach them 4+ examples each. Until then they're manual grid rows.
+- **share** — copies a link that carries the whole beat in the URL fragment; opening
+  it loads the pattern instantly. No server involved — the beat lives in the link.
 - **sensitivity** — onset detector threshold, turn up if quiet hits get missed. The gear
   icon opens more tuning: min gap between hits, noise gate, classifier confidence floor,
   profile trust, kit volume (all persisted locally).
@@ -84,7 +86,10 @@ as in the published work this follows.
 ## Deployment
 
 Static hosting is enough: `cd web && npm run build`, serve `web/dist/` over HTTPS
-(getUserMedia requires it). No server-side compute, no special headers required.
+(getUserMedia requires it). No server-side compute required. The full plan —
+provider choice (Cloudflare Pages), cache/model-versioning strategy, CI deploy,
+and the owner runbook — is in `docs/deployment.md`; hosting config lives in
+`web/public/_headers` + `web/wrangler.toml`, CI in `.github/workflows/ci.yml`.
 
 ## Licenses of shipped assets
 
