@@ -8,7 +8,7 @@ function hit(time: number, drum: DrumClass, strength = 1): ClassifiedHit {
     strength,
     drum,
     confidence: 0.9,
-    probs: { kick: 0.9, snare: 0.03, hihat_closed: 0.03, hihat_open: 0.04 },
+    probs: { kick: 0.9, snare: 0.03, hihat_closed: 0.03, hihat_open: 0.04, clap: 0, tom: 0 },
   };
 }
 

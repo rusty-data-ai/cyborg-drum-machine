@@ -1,12 +1,32 @@
-/** Drum classes — must match the training pipeline's class order (ml/). */
-export const DRUM_CLASSES = ['kick', 'snare', 'hihat_closed', 'hihat_open'] as const;
+/** Classes the global ONNX model outputs — must match ml/dataset.py CLASSES order (minus 'other'). */
+export const MODEL_DRUM_CLASSES = ['kick', 'snare', 'hihat_closed', 'hihat_open'] as const;
+export type ModelDrumClass = (typeof MODEL_DRUM_CLASSES)[number];
+
+/**
+ * Pad classes shown in the grid. clap/tom are KNN-only: the global model never
+ * saw them, so they are classifiable only from the user's taught profile.
+ */
+export const DRUM_CLASSES = [
+  'kick',
+  'snare',
+  'hihat_closed',
+  'hihat_open',
+  'clap',
+  'tom',
+] as const;
 export type DrumClass = (typeof DRUM_CLASSES)[number];
+
+export function isModelDrumClass(c: DrumClass): c is ModelDrumClass {
+  return (MODEL_DRUM_CLASSES as readonly string[]).includes(c);
+}
 
 export const DRUM_LABELS: Record<DrumClass, string> = {
   kick: 'Kick',
   snare: 'Snare',
   hihat_closed: 'Closed Hat',
   hihat_open: 'Open Hat',
+  clap: 'Clap',
+  tom: 'Tom',
 };
 
 /** A detected onset, before classification. Times are AudioContext time (seconds). */
@@ -23,7 +43,7 @@ export interface ClassifiedHit extends OnsetEvent {
   /** Softmax probability of the winning class. */
   confidence: number;
   probs: Record<DrumClass, number>;
-  /** 64-d embedding, kept so hits can be re-classified when the user profile changes. */
+  /** Embedding, kept so hits can be re-classified when the user profile changes. */
   embedding?: Float32Array;
 }
 
@@ -40,11 +60,8 @@ export function emptyPattern(bpm = 100, steps = 16): Pattern {
   return {
     bpm,
     steps,
-    grid: {
-      kick: new Array(steps).fill(0),
-      snare: new Array(steps).fill(0),
-      hihat_closed: new Array(steps).fill(0),
-      hihat_open: new Array(steps).fill(0),
-    },
+    grid: Object.fromEntries(
+      DRUM_CLASSES.map((c) => [c, new Array(steps).fill(0)]),
+    ) as Record<DrumClass, number[]>,
   };
 }

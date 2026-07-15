@@ -18,6 +18,15 @@ export interface MicEngineEvents {
   onLevel?: (rms: number) => void;
 }
 
+/** Tunables forwarded to the onset worklet via its {type:'config'} message. */
+export interface WorkletConfig {
+  sensitivity?: number;
+  /** Minimum gap between onsets, seconds. */
+  minGap?: number;
+  /** Linear RMS noise gate. */
+  noiseGateRms?: number;
+}
+
 export class MicEngine {
   readonly ctx: AudioContext;
   private stream: MediaStream | null = null;
@@ -36,7 +45,7 @@ export class MicEngine {
     return this.worklet !== null;
   }
 
-  async start(sensitivity = 0.5): Promise<void> {
+  async start(config: WorkletConfig = {}): Promise<void> {
     if (this.worklet) return;
     await this.ctx.resume();
     if (!this.workletLoaded) {
@@ -62,7 +71,7 @@ export class MicEngine {
       numberOfOutputs: 1,
       channelCount: 1,
     });
-    this.worklet.port.postMessage({ type: 'config', sensitivity });
+    this.worklet.port.postMessage({ type: 'config', ...config });
     this.worklet.port.onmessage = (e) => {
       const d = e.data;
       if (d.type === 'onset') {
@@ -85,8 +94,8 @@ export class MicEngine {
     this.source.connect(this.worklet).connect(mute).connect(this.ctx.destination);
   }
 
-  setSensitivity(sensitivity: number): void {
-    this.worklet?.port.postMessage({ type: 'config', sensitivity });
+  configure(config: WorkletConfig): void {
+    this.worklet?.port.postMessage({ type: 'config', ...config });
   }
 
   stop(): void {

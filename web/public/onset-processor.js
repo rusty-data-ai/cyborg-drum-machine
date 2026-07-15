@@ -13,7 +13,9 @@
  *   { type: 'segment', time, strength, sampleRate, pcm }    — ~SEGMENT_POST s later
  *   { type: 'level', rms }                                  — ~every 50 ms
  * Messages IN:
- *   { type: 'config', sensitivity }                          — 0..1, default 0.5
+ *   { type: 'config', sensitivity?, minGap?, noiseGateRms? }
+ *     sensitivity 0..1 (default 0.5), minGap seconds (default 0.06),
+ *     noiseGateRms linear RMS (default 0.004 ≈ -48 dBFS)
  */
 
 const FFT_SIZE = 512;
@@ -99,6 +101,8 @@ class OnsetProcessor extends AudioWorkletProcessor {
     this.lastOnsetTime = -1;
     this.pendingSegments = []; // { onsetSample, strength }
     this.sensitivity = 0.5;
+    this.minGap = MIN_GAP;
+    this.noiseGateRms = NOISE_GATE_RMS;
 
     this.levelAccum = 0;
     this.levelCount = 0;
@@ -106,8 +110,16 @@ class OnsetProcessor extends AudioWorkletProcessor {
     this.levelNext = this.levelEvery;
 
     this.port.onmessage = (e) => {
-      if (e.data && e.data.type === 'config' && typeof e.data.sensitivity === 'number') {
-        this.sensitivity = Math.max(0, Math.min(1, e.data.sensitivity));
+      const d = e.data;
+      if (!d || d.type !== 'config') return;
+      if (typeof d.sensitivity === 'number') {
+        this.sensitivity = Math.max(0, Math.min(1, d.sensitivity));
+      }
+      if (typeof d.minGap === 'number') {
+        this.minGap = Math.max(0.02, Math.min(0.25, d.minGap));
+      }
+      if (typeof d.noiseGateRms === 'number') {
+        this.noiseGateRms = Math.max(0, Math.min(0.5, d.noiseGateRms));
       }
     };
   }
@@ -209,7 +221,7 @@ class OnsetProcessor extends AudioWorkletProcessor {
 
     const onsetSample = this.fluxAbsFrame[c];
     const time = onsetSample / sampleRate;
-    if (this.lastOnsetTime >= 0 && time - this.lastOnsetTime < MIN_GAP) return;
+    if (this.lastOnsetTime >= 0 && time - this.lastOnsetTime < this.minGap) return;
 
     // Noise gate: quick RMS check on the 30 ms after the onset.
     const gateLen = Math.min(Math.round(sampleRate * 0.03), this.absPos - onsetSample);
@@ -218,7 +230,7 @@ class OnsetProcessor extends AudioWorkletProcessor {
       const v = this.ring[(onsetSample + i) % this.ringSize];
       e += v * v;
     }
-    if (Math.sqrt(e / Math.max(1, gateLen)) < NOISE_GATE_RMS) return;
+    if (Math.sqrt(e / Math.max(1, gateLen)) < this.noiseGateRms) return;
 
     this.lastOnsetTime = time;
     const strength = cand / (mean + std + 1e-6);

@@ -126,6 +126,27 @@ describe('onset-processor worklet', () => {
     expect(messages.filter((m) => m.type === 'onset').length).toBe(0);
   });
 
+  it('config widens the minimum gap between hits', () => {
+    synthHit(audio, 0.5);
+    synthHit(audio, 0.62); // 120 ms later — beyond the default 60 ms gap
+    const base = createProcessor();
+    base.feed(audio);
+    expect(base.messages.filter((m) => m.type === 'onset').length).toBe(2);
+
+    const wide = createProcessor();
+    wide.proc.port.onmessage!({ data: { type: 'config', minGap: 0.2 } });
+    wide.feed(audio);
+    expect(wide.messages.filter((m) => m.type === 'onset').length).toBe(1);
+  });
+
+  it('config raises the noise gate above audible hits', () => {
+    synthHit(audio, 0.5);
+    const { proc, feed, messages } = createProcessor();
+    proc.port.onmessage!({ data: { type: 'config', noiseGateRms: 0.5 } });
+    feed(audio);
+    expect(messages.filter((m) => m.type === 'onset').length).toBe(0);
+  });
+
   it('resolves 16th notes at 120 bpm (125 ms apart)', () => {
     const times = [0.5, 0.625, 0.75, 0.875];
     for (const t of times) synthHit(audio, t, 0.5, 0.03);

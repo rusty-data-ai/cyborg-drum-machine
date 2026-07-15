@@ -1,4 +1,5 @@
 import type { DrumClass } from './types';
+import { DRUM_CLASSES } from './types';
 
 /**
  * Drum voice playback. Prefers one-shot samples (loaded from /drums/*.wav);
@@ -20,9 +21,14 @@ export class DrumKit {
     this.out.connect(destination ?? ctx.destination);
   }
 
+  /** Master kit volume, 0..1. */
+  setVolume(v: number): void {
+    this.out.gain.value = Math.max(0, Math.min(1, v));
+  }
+
   /** Attempt to load sampled sounds; missing files silently fall back to synthesis. */
   async loadSamples(baseUrl = '/drums'): Promise<void> {
-    const names: DrumClass[] = ['kick', 'snare', 'hihat_closed', 'hihat_open'];
+    const names: readonly DrumClass[] = DRUM_CLASSES;
     await Promise.all(
       names.map(async (name) => {
         try {
@@ -66,6 +72,12 @@ export class DrumKit {
         break;
       case 'hihat_open':
         this.synthHat(time, v, 0.4, true);
+        break;
+      case 'clap':
+        this.synthClap(time, v);
+        break;
+      case 'tom':
+        this.synthTom(time, v);
         break;
     }
   }
@@ -137,6 +149,39 @@ export class DrumKit {
     noise.connect(hp).connect(g).connect(this.out);
     if (open) this.openHatGains.push(g);
     noise.start(t);
+  }
+
+  /** Bandpassed noise bursts ~10 ms apart + longer tail — the 808 clap trick. */
+  private synthClap(t: number, v: number): void {
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = 1200;
+    filt.Q.value = 1.5;
+    filt.connect(this.out);
+    for (let n = 0; n < 4; n++) {
+      const at = t + n * 0.011;
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer(0.25);
+      const g = this.ctx.createGain();
+      const decay = n === 3 ? 0.18 : 0.014;
+      g.gain.setValueAtTime((n === 3 ? 0.7 : 0.9) * v, at);
+      g.gain.exponentialRampToValueAtTime(0.001, at + decay);
+      noise.connect(g).connect(filt);
+      noise.start(at);
+    }
+  }
+
+  /** Pitched sine sweep, ~150→90 Hz over the decay. */
+  private synthTom(t: number, v: number): void {
+    const osc = this.ctx.createOscillator();
+    osc.frequency.setValueAtTime(150, t);
+    osc.frequency.exponentialRampToValueAtTime(90, t + 0.2);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc.connect(g).connect(this.out);
+    osc.start(t);
+    osc.stop(t + 0.3);
   }
 
   private _noiseCache: AudioBuffer | null = null;

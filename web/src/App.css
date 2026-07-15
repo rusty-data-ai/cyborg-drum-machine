@@ -155,6 +155,53 @@ nav {
   background: var(--accent);
 }
 
+.btn.gear {
+  font-size: 17px;
+  padding: 6px 10px;
+}
+
+.btn.gear.active {
+  color: var(--accent-2);
+}
+
+/* ---- settings panel ---- */
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.settings-row input[type='range'] {
+  flex: 1;
+  min-width: 80px;
+  accent-color: var(--accent);
+}
+
+.settings-label {
+  width: 190px;
+  flex-shrink: 0;
+}
+
+.settings-value {
+  width: 64px;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 .hint {
   text-align: center;
   color: var(--accent-2);
@@ -285,7 +332,7 @@ nav {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 22px 10px;
+  padding: 14px 10px;
   border-radius: 10px;
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -301,6 +348,76 @@ nav {
 .teach-pad.active {
   border-color: var(--accent);
   box-shadow: 0 0 16px rgba(255, 92, 57, 0.35);
+}
+
+.teach-pad.testing {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 16px rgba(255, 176, 58, 0.35);
+}
+
+.teach-pad-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.teach-pad-note {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.example-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.example-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-x {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.chip-x:hover {
+  color: var(--accent);
+}
+
+.teach-feedback {
+  text-align: center;
+  font-size: 14px;
+  min-height: 20px;
+}
+
+.teach-feedback.match {
+  color: var(--led);
+}
+
+.teach-feedback.mismatch {
+  color: var(--accent-2);
+}
+
+.teach-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .teach-pad.done .teach-pad-count {
@@ -351,5 +468,14 @@ footer {
   .pad-label {
     width: 64px;
     font-size: 11px;
+  }
+
+  .settings-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .settings-label {
+    width: 100%;
   }
 }

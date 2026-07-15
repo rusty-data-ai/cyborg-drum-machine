@@ -1,8 +1,9 @@
 // wasm-only build: skips the 26 MB WebGPU (jsep) runtime we don't use.
 import * as ort from 'onnxruntime-web/wasm';
 import type { ClassifiedHit, DrumClass, OnsetEvent } from './types';
-import { DRUM_CLASSES } from './types';
+import { DRUM_CLASSES, MODEL_DRUM_CLASSES } from './types';
 import { KnnProfile } from './knn';
+import { blendProbs } from './blend';
 import { resample, fitLength } from './resample';
 
 /**
@@ -22,12 +23,23 @@ export interface ModelMeta {
   embeddingDim: number;
 }
 
-const CONFIDENCE_FLOOR = 0.4;
+const DEFAULT_CONFIDENCE_FLOOR = 0.4;
+const DEFAULT_PROFILE_WEIGHT = 0.85;
+
+export interface ClassifierCall {
+  drum: DrumClass;
+  confidence: number;
+  probs: Record<DrumClass, number>;
+}
 
 export class HitClassifier {
   private session: ort.InferenceSession | null = null;
   private meta: ModelMeta | null = null;
   readonly profile = new KnnProfile();
+  /** Blended confidence below this → hit rejected. Settings-tunable. */
+  confidenceFloor = DEFAULT_CONFIDENCE_FLOOR;
+  /** Cap on the KNN blend weight ("trust my profile"). Settings-tunable. */
+  profileWeight = DEFAULT_PROFILE_WEIGHT;
 
   get ready(): boolean {
     return this.session !== null;
@@ -74,9 +86,32 @@ export class HitClassifier {
   }
 
   /**
-   * Classify a mic segment. Returns null when the hit is rejected
-   * ('other' wins, or confidence below floor).
+   * Blend + rejection on already-computed model outputs; stores nothing.
+   * Returns null when the hit would be rejected ('other' wins, or blended
+   * confidence below the floor). Used by classify() and by the teach flow's
+   * live feedback / test mode.
    */
+  decide(probs: number[], embedding: Float32Array): ClassifierCall | null {
+    const blended = blendProbs(
+      probs,
+      this.profile.classify(embedding),
+      this.profile.countsByClass(),
+      this.profile.size,
+      this.profileWeight,
+    );
+
+    // Rejection: 'other' judged on the *global* model only (KNN has no other class).
+    const otherProb = probs[MODEL_DRUM_CLASSES.length] ?? 0;
+    if (otherProb > 0.5) return null;
+
+    let best: DrumClass = 'kick';
+    for (const c of DRUM_CLASSES) if (blended[c] > blended[best]) best = c;
+    if (blended[best] < this.confidenceFloor) return null;
+
+    return { drum: best, confidence: blended[best], probs: blended };
+  }
+
+  /** Classify a mic segment. Returns null when the hit is rejected. */
   async classify(
     onset: OnsetEvent,
     pcm: Float32Array,
@@ -84,36 +119,9 @@ export class HitClassifier {
   ): Promise<ClassifiedHit | null> {
     const patch = this.preparePatch(pcm, sourceRate);
     const { probs, embedding } = await this.infer(patch);
-
-    // Global model distribution over the 4 drum classes + other.
-    const otherProb = probs[4] ?? 0;
-    const drumProbs = probs.slice(0, 4);
-    const drumSum = drumProbs.reduce((a, b) => a + b, 0) || 1;
-
-    // Blend with user KNN (trained only on drum classes). Held-out-user eval:
-    // KNN dominates once the profile is populated, so let alpha run high.
-    const knn = this.profile.classify(embedding);
-    const alpha = knn ? Math.min(0.85, this.profile.size / 24) : 0;
-    const blended: Record<DrumClass, number> = {} as Record<DrumClass, number>;
-    DRUM_CLASSES.forEach((c, i) => {
-      const global = drumProbs[i] / drumSum;
-      blended[c] = alpha * (knn ? knn[c] : 0) + (1 - alpha) * global;
-    });
-
-    // Rejection: 'other' judged on the *global* model only (KNN has no other class).
-    if (otherProb > 0.5) return null;
-
-    let best: DrumClass = 'kick';
-    for (const c of DRUM_CLASSES) if (blended[c] > blended[best]) best = c;
-    if (blended[best] < CONFIDENCE_FLOOR) return null;
-
-    return {
-      ...onset,
-      drum: best,
-      confidence: blended[best],
-      probs: blended,
-      embedding,
-    };
+    const call = this.decide(probs, embedding);
+    if (!call) return null;
+    return { ...onset, ...call, embedding };
   }
 }
 

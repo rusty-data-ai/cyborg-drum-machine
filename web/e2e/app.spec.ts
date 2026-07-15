@@ -38,8 +38,8 @@ test('loads with grid, transport, and no console errors', async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: /drum machine/i })).toBeVisible();
-  await expect(page.locator('.grid-row')).toHaveCount(4);
-  await expect(page.locator('.cell')).toHaveCount(64);
+  await expect(page.locator('.grid-row')).toHaveCount(6);
+  await expect(page.locator('.cell')).toHaveCount(96);
   await expect(page.getByRole('button', { name: '● REC' })).toBeVisible();
   await page.waitForTimeout(1500); // let the model load settle
   expect(realErrors(errors)).toEqual([]);
@@ -83,6 +83,26 @@ test('record flow captures hits from the (fake) mic', async ({ page }) => {
   expect(realErrors(errors)).toEqual([]);
 });
 
+test('settings panel opens and persists tuning parameters', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'settings' }).click();
+  await expect(page.locator('.settings-panel')).toBeVisible();
+
+  // Nudge "min gap between hits" (default 60, step 5) and check persistence.
+  const gap = page.getByLabel('min gap between hits');
+  await expect(gap).toHaveValue('60');
+  await gap.focus();
+  await gap.press('ArrowRight');
+  await gap.press('ArrowRight');
+  await expect(gap).toHaveValue('70');
+
+  await page.reload();
+  await page.getByRole('button', { name: 'settings' }).click();
+  await expect(page.getByLabel('min gap between hits')).toHaveValue('70');
+  expect(realErrors(errors)).toEqual([]);
+});
+
 test('teach flow records calibration examples', async ({ page }) => {
   test.skip(!MODEL_EXPORTED, 'model not exported yet — run ml/export.py');
   const errors = collectErrors(page);
@@ -94,5 +114,25 @@ test('teach flow records calibration examples', async ({ page }) => {
   await expect(page.locator('.teach-pad').first()).toContainText(/[1-9]\d* \/ 8/, {
     timeout: 12_000,
   });
+  expect(realErrors(errors)).toEqual([]);
+});
+
+test('teach panel shows per-example chips that can be deleted', async ({ page }) => {
+  test.skip(!MODEL_EXPORTED, 'model not exported yet — run ml/export.py');
+  const errors = collectErrors(page);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '● REC' })).toBeEnabled({ timeout: 15_000 });
+  await page.getByRole('button', { name: /teach it your sounds/i }).click();
+  const kickPad = page.locator('.teach-pad').first();
+  await page.getByRole('button', { name: /^kick/i }).click();
+  await expect(kickPad.locator('.example-chip').first()).toBeVisible({ timeout: 12_000 });
+  // Deselect the pad so no new examples land while we delete.
+  await page.getByRole('button', { name: /^kick/i }).click();
+  await page.waitForTimeout(600); // drain any in-flight segment
+  const before = await kickPad.locator('.example-chip').count();
+  expect(before).toBeGreaterThan(0);
+  await kickPad.locator('.chip-x').first().click();
+  await expect(kickPad.locator('.example-chip')).toHaveCount(before - 1);
+  await expect(kickPad).toContainText(`${before - 1} / 8`);
   expect(realErrors(errors)).toEqual([]);
 });

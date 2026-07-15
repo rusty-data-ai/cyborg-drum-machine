@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import { SequencerGrid } from './components/SequencerGrid';
-import { TeachPanel } from './components/TeachPanel';
+import { SettingsPanel } from './components/SettingsPanel';
+import { TeachPanel, type TeachFeedback } from './components/TeachPanel';
 import { HitClassifier } from './lib/classifier';
 import { DrumKit } from './lib/drumSynth';
+import type { UserExample } from './lib/knn';
 import { startMetronome, type MetronomeHandle } from './lib/metronome';
 import { MicEngine, type SegmentEvent } from './lib/micEngine';
 import { quantizeHits } from './lib/quantize';
 import { Sequencer } from './lib/sequencer';
+import {
+  loadSettings,
+  saveSettings,
+  toWorkletConfig,
+  type AppSettings,
+} from './lib/settings';
 import type { ClassifiedHit, DrumClass, Pattern } from './lib/types';
 import { DRUM_CLASSES, emptyPattern } from './lib/types';
 
@@ -25,13 +33,17 @@ export default function App() {
   const [hasPattern, setHasPattern] = useState(false);
   const [playhead, setPlayhead] = useState(-1);
   const [level, setLevel] = useState(0);
-  const [sensitivity, setSensitivity] = useState(0.5);
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [showSettings, setShowSettings] = useState(false);
   const [metroMode, setMetroMode] = useState(false);
   const [metroBpm, setMetroBpm] = useState(95);
   const [flash, setFlash] = useState<Partial<Record<DrumClass, number>>>({});
   const [hitLed, setHitLed] = useState(0);
   const [tab, setTab] = useState<Tab>('play');
   const [teachTarget, setTeachTarget] = useState<DrumClass | null>(null);
+  const [testTarget, setTestTarget] = useState<DrumClass | null>(null);
+  const [examples, setExamples] = useState<readonly UserExample[]>([]);
+  const [feedback, setFeedback] = useState<TeachFeedback | null>(null);
   const [profileCounts, setProfileCounts] = useState<Record<DrumClass, number>>(
     Object.fromEntries(DRUM_CLASSES.map((c) => [c, 0])) as Record<DrumClass, number>,
   );
@@ -50,20 +62,43 @@ export default function App() {
   const lastActivityRef = useRef(0);
   const tabRef = useRef<Tab>('play');
   const teachTargetRef = useRef<DrumClass | null>(null);
+  const testTargetRef = useRef<DrumClass | null>(null);
   const recordingRef = useRef(false);
   const patternRef = useRef(pattern);
+  const settingsRef = useRef(settings);
 
   tabRef.current = tab;
   teachTargetRef.current = teachTarget;
+  testTargetRef.current = testTarget;
   recordingRef.current = recording;
   patternRef.current = pattern;
+  settingsRef.current = settings;
+
+  // Persist + apply settings wherever they land (classifier, kit, live worklet).
+  useEffect(() => {
+    saveSettings(settings);
+    const clf = classifierRef.current;
+    clf.confidenceFloor = settings.confidenceFloor;
+    clf.profileWeight = settings.profileWeight;
+    kitRef.current?.setVolume(settings.kitVolume);
+    micRef.current?.configure(toWorkletConfig(settings));
+  }, [settings]);
+
+  const updateSettings = useCallback((patch: Partial<AppSettings>) => {
+    setSettings((s) => ({ ...s, ...patch }));
+  }, []);
+
+  const refreshProfile = useCallback(() => {
+    setProfileCounts(classifierRef.current.profile.countsByClass());
+    setExamples([...classifierRef.current.profile.list()]);
+  }, []);
 
   // Load the classifier once (pure WASM, no user gesture needed).
   useEffect(() => {
     classifierRef.current
       .load()
       .then(() => {
-        setProfileCounts(classifierRef.current.profile.countsByClass());
+        refreshProfile();
         setModelReady(true);
       })
       .catch((err) => {
@@ -72,7 +107,7 @@ export default function App() {
           'Classifier model not found — the drum machine still works, but beatbox transcription is disabled.',
         );
       });
-  }, []);
+  }, [refreshProfile]);
 
   // Re-render shortly after a flash so highlights can turn off.
   useEffect(() => {
@@ -92,12 +127,24 @@ export default function App() {
     lastActivityRef.current = ctx.currentTime;
 
     if (tabRef.current === 'teach') {
-      const target = teachTargetRef.current;
+      const testing = testTargetRef.current !== null;
+      const target = testing ? testTargetRef.current : teachTargetRef.current;
       if (!target) return;
       const patch = classifier.preparePatch(seg.pcm, seg.sampleRate);
-      const { embedding } = await classifier.infer(patch);
-      await classifier.profile.add(target, embedding, classifier.modelVersion);
-      setProfileCounts(classifier.profile.countsByClass());
+      const { probs, embedding } = await classifier.infer(patch);
+      // Live feedback: what the *current* blended classifier calls this sound
+      // (decided before storing, so a taught example doesn't vote for itself).
+      const call = classifier.decide(probs, embedding);
+      if (!testing) {
+        await classifier.profile.add(target, embedding, classifier.modelVersion);
+        refreshProfile();
+      }
+      setFeedback({
+        target,
+        predicted: call?.drum ?? null,
+        confidence: call?.confidence ?? 0,
+        stored: !testing,
+      });
       setFlash((f) => ({ ...f, [target]: performance.now() }));
       return;
     }
@@ -114,13 +161,14 @@ export default function App() {
       hitsRef.current.push(hit);
       setFlash((f) => ({ ...f, [hit.drum]: performance.now() }));
     }
-  }, []);
+  }, [refreshProfile]);
 
   const ensureAudio = useCallback(async () => {
     if (!ctxRef.current) {
       const ctx = new AudioContext({ latencyHint: 'interactive' });
       ctxRef.current = ctx;
       const kit = new DrumKit(ctx);
+      kit.setVolume(settingsRef.current.kitVolume);
       kitRef.current = kit;
       void kit.loadSamples();
       const seq = new Sequencer(ctx, kit, patternRef.current);
@@ -191,12 +239,12 @@ export default function App() {
         Math.max(0, (handle.downbeat - ctx.currentTime) * 1000),
       );
     }
-    await micRef.current!.start(sensitivity);
+    await micRef.current!.start(toWorkletConfig(settingsRef.current));
     setMicWarning(micRef.current!.processingWarning);
     recordStartRef.current = ctx.currentTime;
     lastActivityRef.current = ctx.currentTime;
     setRecording(true);
-  }, [ensureAudio, metroMode, metroBpm, sensitivity, stopPlayback]);
+  }, [ensureAudio, metroMode, metroBpm, stopPlayback]);
 
   // Auto-stop on silence / max length.
   useEffect(() => {
@@ -243,25 +291,51 @@ export default function App() {
     else startPlayback(pattern);
   };
 
-  const handleTeachTarget = useCallback(
-    async (drum: DrumClass | null) => {
-      setTeachTarget(drum);
-      if (drum) {
+  const armTeachMic = useCallback(
+    async (on: boolean) => {
+      if (on) {
         await ensureAudio();
         if (!micRef.current!.running) {
-          await micRef.current!.start(sensitivity);
+          await micRef.current!.start(toWorkletConfig(settingsRef.current));
           setMicWarning(micRef.current!.processingWarning);
         }
       } else if (!recordingRef.current) {
         micRef.current?.stop();
       }
     },
-    [ensureAudio, sensitivity],
+    [ensureAudio],
   );
+
+  const handleTeachTarget = useCallback(
+    async (drum: DrumClass | null) => {
+      setTeachTarget(drum);
+      setTestTarget(null);
+      setFeedback(null);
+      await armTeachMic(drum !== null);
+    },
+    [armTeachMic],
+  );
+
+  const handleTestTarget = useCallback(
+    async (drum: DrumClass | null) => {
+      setTestTarget(drum);
+      setTeachTarget(null);
+      setFeedback(null);
+      await armTeachMic(drum !== null);
+    },
+    [armTeachMic],
+  );
+
+  const undoLastExample = useCallback(() => {
+    const list = classifierRef.current.profile.list();
+    if (list.length === 0) return;
+    void classifierRef.current.profile.remove(list[list.length - 1].id).then(refreshProfile);
+  }, [refreshProfile]);
 
   const switchTab = (t: Tab) => {
     if (recording) stopRecording();
     if (teachTarget) void handleTeachTarget(null);
+    if (testTarget) void handleTestTarget(null);
     setTab(t);
   };
 
@@ -343,12 +417,8 @@ export default function App() {
                 min={0}
                 max={1}
                 step={0.05}
-                value={sensitivity}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setSensitivity(v);
-                  micRef.current?.setSensitivity(v);
-                }}
+                value={settings.sensitivity}
+                onChange={(e) => updateSettings({ sensitivity: Number(e.target.value) })}
               />
             </label>
             <div className="meter" aria-hidden>
@@ -357,7 +427,17 @@ export default function App() {
                 style={{ width: `${Math.min(100, level * 900)}%` }}
               />
             </div>
+            <button
+              className={`btn subtle gear ${showSettings ? 'active' : ''}`}
+              aria-label="settings"
+              title="Settings"
+              onClick={() => setShowSettings((s) => !s)}
+            >
+              ⚙
+            </button>
           </div>
+
+          {showSettings && <SettingsPanel settings={settings} onChange={updateSettings} />}
 
           {recording && (
             <div className="hint">
@@ -404,13 +484,18 @@ export default function App() {
       {tab === 'teach' && (
         <TeachPanel
           counts={profileCounts}
+          examples={examples}
           activeTarget={teachTarget}
-          recording={teachTarget !== null}
+          testTarget={testTarget}
+          feedback={feedback}
           onSelectTarget={(d) => void handleTeachTarget(d)}
+          onSelectTest={(d) => void handleTestTarget(d)}
+          onDeleteExample={(id) => {
+            void classifierRef.current.profile.remove(id).then(refreshProfile);
+          }}
+          onUndoLast={undoLastExample}
           onClearProfile={() => {
-            void classifierRef.current.profile.clear().then(() => {
-              setProfileCounts(classifierRef.current.profile.countsByClass());
-            });
+            void classifierRef.current.profile.clear().then(refreshProfile);
           }}
         />
       )}
