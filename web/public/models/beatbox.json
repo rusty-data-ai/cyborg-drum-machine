@@ -1,0 +1,15 @@
+{
+  "version": "2",
+  "classes": [
+    "kick",
+    "snare",
+    "hihat_closed",
+    "hihat_open",
+    "other"
+  ],
+  "sampleRate": 22050,
+  "patchLen": 7712,
+  "patchPreS": 0.04,
+  "embeddingDim": 128,
+  "valAcc": 0.7488721804511278
+}

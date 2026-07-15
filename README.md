@@ -57,11 +57,24 @@ driven with synthetic percussive audio in a stubbed worklet scope.
 
 ## Model
 
-5-class (kick, snare, closed hat, open hat, other/reject), ~250k params, trained on
-AVP + AVP-LVT (CC BY 4.0) and beatboxset1 (CC BY-SA 3.0, training only), with an
-auxiliary syllable head (IPA phoneme annotations) per Delgado et al. 2022. Exported to
-ONNX (opset 17) and run with ONNX Runtime Web (WASM EP, single-threaded). Two outputs:
-class logits and a 128-d embedding used by the in-browser KNN personalization.
+5-class (kick, snare, closed hat, open hat, other/reject), ~380k params / 1.5 MB ONNX,
+trained on AVP + AVP-LVT (CC BY 4.0) and beatboxset1 (CC BY-SA 3.0, training only), with
+an auxiliary syllable head (IPA phoneme annotations) per Delgado et al. 2022. Input:
+raw 22.05 kHz waveform, 350 ms window around the onset; the mel frontend is baked into
+the graph. Two outputs: class logits and a 128-d embedding for the in-browser KNN.
+
+Measured (v2 model, held-out users never seen in training):
+
+| Metric | Value |
+|---|---|
+| Uncalibrated accuracy, amateur (AVP) test users | 57% |
+| **Calibrated** (8 taught examples/class, KNN blend) | **73% mean, 91% best user** |
+| Browser inference (Chromium, WASM, single thread) | ~2.3 ms/hit |
+| Python↔browser output parity | < 1e-3 |
+
+Uncalibrated cross-user accuracy is known-hard (literature: ~73% on 4-class without the
+reject class); the "Teach it your sounds" flow is where the accuracy comes from — exactly
+as in the published work this follows.
 
 ## Deployment
 

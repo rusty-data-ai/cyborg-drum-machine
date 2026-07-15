@@ -90,9 +90,10 @@ export class HitClassifier {
     const drumProbs = probs.slice(0, 4);
     const drumSum = drumProbs.reduce((a, b) => a + b, 0) || 1;
 
-    // Blend with user KNN (trained only on drum classes).
+    // Blend with user KNN (trained only on drum classes). Held-out-user eval:
+    // KNN dominates once the profile is populated, so let alpha run high.
     const knn = this.profile.classify(embedding);
-    const alpha = knn ? Math.min(0.8, this.profile.size / 24) : 0;
+    const alpha = knn ? Math.min(0.85, this.profile.size / 24) : 0;
     const blended: Record<DrumClass, number> = {} as Record<DrumClass, number>;
     DRUM_CLASSES.forEach((c, i) => {
       const global = drumProbs[i] / drumSum;

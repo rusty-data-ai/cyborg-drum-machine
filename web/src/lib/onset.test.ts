@@ -24,13 +24,16 @@ interface Msg {
   sampleRate?: number;
 }
 
+interface ProcessorInstance {
+  process: (inputs: Float32Array[][]) => boolean;
+  port: { onmessage: ((e: { data: unknown }) => void) | null };
+}
+
 function createProcessor() {
   let frame = 0;
   const messages: Msg[] = [];
-  let ProcessorClass: (new () => {
-    process: (inputs: Float32Array[][]) => boolean;
-    port: { onmessage: ((e: { data: unknown }) => void) | null };
-  }) | null = null;
+  // Assigned from inside the evaluated worklet source; TS can't see that.
+  let ProcessorClass: (new () => ProcessorInstance) | null = null;
 
   const scope = {
     get currentFrame() {
@@ -51,8 +54,9 @@ function createProcessor() {
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function('scope', `with (scope) { ${src} }`)(scope);
-  if (!ProcessorClass) throw new Error('processor did not register');
-  const proc = new ProcessorClass();
+  const Cls = ProcessorClass as (new () => ProcessorInstance) | null;
+  if (!Cls) throw new Error('processor did not register');
+  const proc = new Cls();
 
   const feed = (samples: Float32Array) => {
     for (let i = 0; i + 128 <= samples.length; i += 128) {
