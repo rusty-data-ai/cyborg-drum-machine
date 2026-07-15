@@ -35,7 +35,12 @@ bash ml/download_data.sh
 - **Teach it your sounds** — record ~8 examples per drum. This builds a personal profile
   (KNN on model embeddings, stored in IndexedDB) that substantially improves accuracy for
   *your* way of beatboxing — per the literature this is worth ~6–17 accuracy points.
-- **sensitivity** — onset detector threshold, turn up if quiet hits get missed.
+  Each example is a deletable chip; "test me" mode shows live predictions without storing.
+- **Clap and Tom pads** are KNN-only: the base model never saw them, so they join
+  transcription once you teach them 4+ examples each. Until then they're manual grid rows.
+- **sensitivity** — onset detector threshold, turn up if quiet hits get missed. The gear
+  icon opens more tuning: min gap between hits, noise gate, classifier confidence floor,
+  profile trust, kit volume (all persisted locally).
 
 ## Repository layout
 

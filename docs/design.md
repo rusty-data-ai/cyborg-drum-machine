@@ -88,9 +88,24 @@ mic ──getUserMedia (EC/NS/AGC off, mono)
 
 - Calibration examples → embeddings via the same ONNX session → IndexedDB
   (`{embedding, label, modelVersion, createdAt}`).
-- Inference: `score = α·knnProbs + (1−α)·globalSoftmax`, α = min(0.8, nUserExamples/24).
-  KNN: cosine similarity, k=5, distance-weighted vote, L2-normalized embeddings.
-- Users can review/delete examples; per-class counts shown; "reset profile" button.
+- Inference: `score = α·knnProbs + (1−α)·globalSoftmax`, α = min(profileWeight,
+  nUserExamples/24), profileWeight default 0.85 (user-tunable). KNN: cosine similarity,
+  k=5, distance-weighted vote, L2-normalized embeddings. Blend logic is pure
+  (`web/src/lib/blend.ts`) and unit-tested.
+- Users review/delete individual examples (chips), undo last, reset profile; a
+  "test me" mode classifies live without storing; teach captures show what the current
+  classifier would have called the sound (decided *before* storing, so an example never
+  votes for itself).
+- **KNN-only pads (clap, tom)**: pad classes are a superset of model classes. Classes the
+  global model never saw get zero global mass and are excluded from KNN voting until the
+  user teaches ≥4 examples — an untaught pad can never win. This makes new vocabulary a
+  pure teach-flow feature, no retraining.
+
+## Tuning settings (gear panel, persisted in localStorage)
+
+Onset sensitivity, min inter-onset gap (worklet), noise gate (worklet), classifier
+confidence floor, profile trust (α cap), kit volume. Defaults equal the original
+constants; `web/src/lib/settings.ts` clamps and survives junk in storage.
 
 ## Deployment
 
