@@ -42,10 +42,10 @@ mic ──getUserMedia (EC/NS/AGC off, mono)
         • 512-pt FFT each 256-sample hop, log-compressed spectral flux
         • adaptive threshold (mean + k·std), local-max peak pick, 60 ms refractory
         • RMS noise gate; sensitivity control from UI
-        • posts: 'onset' (immediate) + 'segment' (250 ms PCM, transferred buffer)
+        • posts: 'onset' (immediate) + 'segment' (350 ms PCM, transferred buffer)
   └─► main thread
-        • resample segment → 16 kHz, 4000 samples  (lib/resample.ts)
-        • ONNX Runtime Web (WASM, SIMD, 1 thread): model(waveform) → logits(5) + emb(64)
+        • resample segment → 22.05 kHz, 7712 samples (350 ms)  (lib/resample.ts)
+        • ONNX Runtime Web (WASM, SIMD, 1 thread): model(waveform) → logits(5) + emb(128)
         • personalization: cosine KNN over user examples, blended with softmax
         • 'other' class or low confidence → hit rejected
         • hits accumulate → on stop: tempo estimate + quantize (lib/quantize.ts)
@@ -66,23 +66,27 @@ mic ──getUserMedia (EC/NS/AGC off, mono)
 
 ## ML pipeline (`ml/`)
 
-- **Task**: 5-way classification of 250 ms patches ([−40 ms, +210 ms] around onset):
-  `kick, snare, hihat_closed, hihat_open, other`.
-- **Input**: 16 kHz mono, 4000 samples. In-graph frontend: conv-STFT (n_fft 512, hop 128,
-  Hann) → 64-mel filterbank → log1p. Patch → 64 × 28.
-- **Backbone**: 4 conv blocks (8/16/32/64, 3×3, BN, ReLU, 2×2 maxpool) → GAP →
-  64-d embedding → two heads: 5-class instrument softmax + auxiliary syllable softmax
-  (onset-phoneme × coda from AVP-LVT annotations, where available) weighted ~0.3.
-  ≈100k params — a few ms in WASM.
-- **Augmentation** (on waveform): gain ±6 dB, pitch ±1.5 semitones, time-stretch 0.8–1.2,
-  onset jitter ±10 ms, additive noise (SNR 15–40 dB), random biquad EQ tilt (mic diversity).
-- **Split**: hold out entire participants (AVP P25–P28 + 2 beatboxset1 recordings) —
-  measures cross-user generalization, the number that matters.
-- **Metrics**: held-out-user accuracy + confusion matrix; report per-class recall.
-  Literature baseline to beat: ~73% user-agnostic; with-KNN ceiling ~90%.
-- **Export**: ONNX opset 17, legacy exporter, fixed shape [1, 4000], outputs
-  `logits [1,5]`, `embedding [1,64]` → `web/public/models/beatbox.onnx` + a JSON metadata
-  file (class order, model version — the KNN store is invalidated on version change).
+- **Task**: 5-way classification of 350 ms patches ([−40 ms, +310 ms] around onset):
+  `kick, snare, hihat_closed, hihat_open, other`. (350 ms: open-hat decay tails carry the
+  open/closed distinction; the literature uses ~384 ms.)
+- **Input**: 22.05 kHz mono, 7712 samples (sibilance above 8 kHz separates the hats).
+  In-graph frontend: conv-STFT (n_fft 512, hop 128, Hann) → 64-mel filterbank → log1p.
+- **Backbone**: 4 conv blocks (16/32/64/128, 3×3, BN, ReLU, 2×2 maxpool) → GAP →
+  128-d embedding → two heads: 5-class instrument softmax + auxiliary syllable softmax
+  (onset-phoneme × coda from AVP-LVT annotations, where available) weighted 0.3.
+  ~380k params incl. frontend buffers → 1.5 MB ONNX, ~2.3 ms in WASM.
+- **Augmentation** (on waveform): gain ±6 dB, random speed 0.93–1.08 (kept narrow — wider
+  stretch blurs the open/closed-hat decay boundary), onset jitter ±10 ms, additive noise
+  (SNR 20–45 dB), first-order spectral tilt (mic diversity), SpecAugment (1 mask).
+- **Split**: hold out entire participants (AVP P3/P10/P17/P26 + 2 beatboxset1 recordings)
+  — measures cross-user generalization, the number that matters. Val: P5/P14/P22 + 1 bbx.
+- **Measured (model v2)**: 57% uncalibrated on held-out AVP users; 73% mean / 91% best
+  with 8 calibration examples per class (ml/eval_knn.py). beatboxset1 experts score much
+  lower uncalibrated (their kicks land in 'other') — calibration is the answer there too.
+- **Export**: ONNX opset 17, legacy exporter, fixed shape [1, 7712], outputs
+  `logits [1,5]`, `embedding [1,128]` → `web/public/models/beatbox.onnx` + a JSON metadata
+  file (class order, model version — the KNN store is invalidated on version change);
+  parity vs PyTorch asserted at export and again in-browser (e2e/parity.spec.ts).
 
 ## Personalization design (extension 5, built-in)
 
@@ -122,6 +126,5 @@ binary in the URL fragment (`web/src/lib/share.ts`).
   the noise gate should cover most; needs live testing.
 - Free-tempo estimation on sloppy input — metronome mode is the fallback; grid-fit score
   could auto-suggest switching.
-- 16 kHz loses sibilance above 8 kHz that separates open/closed hats — if the confusion
-  matrix shows it, retrain at 22.05 kHz (frontend is in-graph, so only the resampler and a
-  constant change in the app).
+- Open/closed hat confusion remains the weakest uncalibrated pair even at 22.05 kHz /
+  350 ms (amateur imitations genuinely overlap); the teach flow is the practical fix.
