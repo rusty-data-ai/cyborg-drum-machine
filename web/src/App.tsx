@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
+import { MidiControls } from './components/MidiControls';
 import { SequencerGrid } from './components/SequencerGrid';
 import { SettingsPanel } from './components/SettingsPanel';
 import { TeachPanel, type TeachFeedback } from './components/TeachPanel';
 import { HitClassifier } from './lib/classifier';
 import { DrumKit } from './lib/drumSynth';
 import type { UserExample } from './lib/knn';
+import { encodePatternToSmf, smfFilename } from './lib/midiFile';
+import { loadMidiPrefs, MidiOut, saveMidiPrefs, type MidiDeviceInfo } from './lib/midiOut';
 import { startMetronome, type MetronomeHandle } from './lib/metronome';
 import { MicEngine, type SegmentEvent } from './lib/micEngine';
 import { quantizeHits } from './lib/quantize';
@@ -54,6 +57,10 @@ export default function App() {
   );
   const [micWarning, setMicWarning] = useState(false);
   const [countingIn, setCountingIn] = useState(false);
+  const [midiOn, setMidiOn] = useState(false);
+  const [midiDevices, setMidiDevices] = useState<MidiDeviceInfo[]>([]);
+  const [midiDeviceId, setMidiDeviceId] = useState<string | null>(null);
+  const [midiNote, setMidiNote] = useState<string | null>(null);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const kitRef = useRef<DrumKit | null>(null);
@@ -71,6 +78,8 @@ export default function App() {
   const recordingRef = useRef(false);
   const patternRef = useRef(pattern);
   const settingsRef = useRef(settings);
+  const midiRef = useRef<MidiOut | null>(null);
+  const midiOnRef = useRef(false);
 
   tabRef.current = tab;
   teachTargetRef.current = teachTarget;
@@ -78,6 +87,7 @@ export default function App() {
   recordingRef.current = recording;
   patternRef.current = pattern;
   settingsRef.current = settings;
+  midiOnRef.current = midiOn;
 
   // Persist + apply settings wherever they land (classifier, kit, live worklet).
   useEffect(() => {
@@ -123,6 +133,88 @@ export default function App() {
     }, 240);
     return () => clearTimeout(t);
   }, [flash, hitLed]);
+
+  // ---- MIDI output ----
+
+  const syncMidiDevices = useCallback((preferId?: string | null) => {
+    const midi = midiRef.current;
+    if (!midi) return;
+    const devices = midi.outputs();
+    setMidiDevices(devices);
+    // Keep the selection when still present; otherwise fall back to the first device.
+    const want = preferId !== undefined ? preferId : midi.selectedId;
+    const pick = devices.find((d) => d.id === want)?.id ?? devices[0]?.id ?? null;
+    const lost = midi.selectedId !== null && !devices.some((d) => d.id === midi.selectedId);
+    midi.select(pick);
+    setMidiDeviceId(pick);
+    setMidiNote(
+      devices.length === 0
+        ? 'no MIDI outputs — plug in a device or start a synth'
+        : lost
+          ? 'MIDI device disconnected — switched output'
+          : null,
+    );
+  }, []);
+
+  const enableMidi = useCallback(
+    async (preferId: string | null) => {
+      const midi = midiRef.current ?? new MidiOut(() => ctxRef.current);
+      midiRef.current = midi;
+      midi.onDevicesChanged = () => syncMidiDevices();
+      try {
+        await midi.enable(); // permission prompt happens here, on user enable only
+        setMidiOn(true);
+        syncMidiDevices(preferId);
+      } catch {
+        setMidiOn(false);
+        setMidiNote('MIDI access was denied');
+      }
+    },
+    [syncMidiDevices],
+  );
+
+  const handleMidiToggle = useCallback(
+    (on: boolean) => {
+      if (on) {
+        void enableMidi(loadMidiPrefs().deviceId);
+        saveMidiPrefs({ enabled: true, deviceId: loadMidiPrefs().deviceId });
+      } else {
+        midiRef.current?.allNotesOff();
+        midiRef.current?.select(null);
+        setMidiOn(false);
+        setMidiNote(null);
+        saveMidiPrefs({ enabled: false, deviceId: midiDeviceId });
+      }
+    },
+    [enableMidi, midiDeviceId],
+  );
+
+  const handleMidiSelect = useCallback((id: string | null) => {
+    midiRef.current?.select(id);
+    setMidiDeviceId(id);
+    saveMidiPrefs({ enabled: true, deviceId: id });
+  }, []);
+
+  // Restore persisted MIDI state (user enabled it previously — no cold prompt otherwise).
+  useEffect(() => {
+    const prefs = loadMidiPrefs();
+    if (prefs.enabled && MidiOut.supported) void enableMidi(prefs.deviceId);
+  }, [enableMidi]);
+
+  useEffect(() => {
+    if (midiOn) saveMidiPrefs({ enabled: true, deviceId: midiDeviceId });
+  }, [midiOn, midiDeviceId]);
+
+  const exportMid = useCallback(() => {
+    const bytes = encodePatternToSmf(patternRef.current);
+    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'audio/midi' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = smfFilename(patternRef.current);
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }, []);
 
   const handleSegment = useCallback(async (seg: SegmentEvent) => {
     const classifier = classifierRef.current;
@@ -178,6 +270,13 @@ export default function App() {
       void kit.loadSamples();
       const seq = new Sequencer(ctx, kit, patternRef.current);
       seq.onStep = (step) => setPlayhead(step);
+      // Schedule-time fan-out: exact AudioContext times, ahead of the beat.
+      seq.onTrigger = (drum, vel, time) => {
+        if (midiOnRef.current && midiRef.current) {
+          const halfStepMs = (60 / patternRef.current.bpm / 4) * 500;
+          midiRef.current.noteAt(drum, vel, time, halfStepMs);
+        }
+      };
       seqRef.current = seq;
       const mic = new MicEngine(ctx);
       mic.events = {
@@ -195,6 +294,7 @@ export default function App() {
 
   const stopPlayback = useCallback(() => {
     seqRef.current?.stop();
+    midiRef.current?.allNotesOff();
     setPlaying(false);
     setPlayhead(-1);
   }, []);
@@ -498,6 +598,17 @@ export default function App() {
             >
               {shareCopied ? 'copied ✓' : 'share'}
             </button>
+            <MidiControls
+              supported={MidiOut.supported}
+              enabled={midiOn}
+              devices={midiDevices}
+              selectedId={midiDeviceId}
+              note={midiNote}
+              hasPattern={hasPattern}
+              onToggle={handleMidiToggle}
+              onSelect={handleMidiSelect}
+              onExport={exportMid}
+            />
             {classifierRef.current.profile.size > 0 && (
               <span className="profile-note">
                 personal profile active · {classifierRef.current.profile.size} examples
