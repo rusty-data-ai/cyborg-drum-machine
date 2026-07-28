@@ -127,7 +127,7 @@ export class HitClassifier {
     const { probs, embedding } = await this.infer(patch);
     const call = this.decide(probs, embedding);
     if (!call) return null;
-    return { ...onset, ...call, embedding };
+    return { ...onset, ...call, embedding, rawProbs: probs };
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ClassifiedHit, Pattern } from './types';
+import type { ClassifiedHit, DrumClass, Pattern } from './types';
 import { emptyPattern } from './types';
 
 /**
@@ -30,6 +30,21 @@ export interface TempoEstimate {
 
 const STEPS_PER_BAR = 16;
 const MAX_BARS = 4;
+
+/** Where a classified hit landed in the pattern (chips ↔ cells mapping). */
+export interface HitPlacement {
+  /** Index into the hits array passed to quantizeHits. */
+  hitIndex: number;
+  drum: DrumClass;
+  step: number;
+  /** The velocity this hit contributed to its cell (cell keeps the max). */
+  velocity: number;
+}
+
+export interface QuantizeResult {
+  pattern: Pattern;
+  placements: HitPlacement[];
+}
 
 export function estimateTempo(
   times: number[],
@@ -69,9 +84,11 @@ export function estimateTempo(
   return { bpm: best.bpm, origin, gridFit: best.r };
 }
 
-/** Snap hits to a 16th grid, producing a looping Pattern. */
-export function quantizeHits(hits: ClassifiedHit[], opts: QuantizeOptions = {}): Pattern {
-  if (hits.length === 0) return emptyPattern(opts.knownBpm ?? 100);
+/** Snap hits to a 16th grid, producing a looping Pattern + per-hit placements. */
+export function quantizeHits(hits: ClassifiedHit[], opts: QuantizeOptions = {}): QuantizeResult {
+  if (hits.length === 0) {
+    return { pattern: emptyPattern(opts.knownBpm ?? 100), placements: [] };
+  }
 
   const times = hits.map((h) => h.time);
   const weights = hits.map((h) => 0.3 + 0.7 * clamp01(h.strength));
@@ -93,25 +110,35 @@ export function quantizeHits(hits: ClassifiedHit[], opts: QuantizeOptions = {}):
 
   const maxStrength = Math.max(...hits.map((h) => h.strength), 1e-6);
   const pattern = emptyPattern(roundBpm(tempo.bpm), steps);
-  hits.forEach((h, i) => {
+  const placements: HitPlacement[] = hits.map((h, i) => {
     const step = ((shifted[i] % steps) + steps) % steps;
     const vel = 0.4 + 0.6 * clamp01(h.strength / maxStrength);
     pattern.grid[h.drum][step] = Math.max(pattern.grid[h.drum][step], vel);
+    return { hitIndex: i, drum: h.drum, step, velocity: vel };
   });
 
-  return rotateToDownbeat(pattern);
+  const anchor = downbeatAnchor(pattern);
+  if (anchor === 0) return { pattern, placements };
+  const rotated = emptyPattern(pattern.bpm, pattern.steps);
+  for (const drum of Object.keys(pattern.grid) as (keyof Pattern['grid'])[]) {
+    for (let s = 0; s < pattern.steps; s++) {
+      rotated.grid[drum][s] = pattern.grid[drum][(s + anchor) % pattern.steps];
+    }
+  }
+  for (const p of placements) p.step = (p.step - anchor + pattern.steps) % pattern.steps;
+  return { pattern: rotated, placements };
 }
 
 /**
- * Rotate the loop so a plausible downbeat is step 0: prefer the strongest
+ * Pick the rotation so a plausible downbeat is step 0: prefer the strongest
  * kick among the earliest hits; fall back to the first occupied step.
  */
-function rotateToDownbeat(p: Pattern): Pattern {
+function downbeatAnchor(p: Pattern): number {
   const occupied: number[] = [];
   for (let s = 0; s < p.steps; s++) {
     if (Object.values(p.grid).some((row) => row[s] > 0)) occupied.push(s);
   }
-  if (occupied.length === 0) return p;
+  if (occupied.length === 0) return 0;
   let anchor = occupied[0];
   // If a kick lands within the first quarter-bar of activity, anchor there.
   for (const s of occupied.slice(0, 4)) {
@@ -120,14 +147,7 @@ function rotateToDownbeat(p: Pattern): Pattern {
       break;
     }
   }
-  if (anchor === 0) return p;
-  const rotated = emptyPattern(p.bpm, p.steps);
-  for (const drum of Object.keys(p.grid) as (keyof Pattern['grid'])[]) {
-    for (let s = 0; s < p.steps; s++) {
-      rotated.grid[drum][s] = p.grid[drum][(s + anchor) % p.steps];
-    }
-  }
-  return rotated;
+  return anchor;
 }
 
 function clamp01(x: number): number {

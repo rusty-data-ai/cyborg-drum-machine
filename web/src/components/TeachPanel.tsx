@@ -1,5 +1,10 @@
 import type { UserExample } from '../lib/knn';
 import { MIN_KNN_EXAMPLES } from '../lib/blend';
+import {
+  MIN_EVAL_CLASSES,
+  MIN_EVAL_EXAMPLES,
+  type ProfileEvaluation,
+} from '../lib/profileEval';
 import type { DrumClass } from '../lib/types';
 import { DRUM_CLASSES, DRUM_LABELS, isModelDrumClass } from '../lib/types';
 
@@ -17,6 +22,10 @@ export interface TeachFeedback {
 interface Props {
   counts: Record<DrumClass, number>;
   examples: readonly UserExample[];
+  /** Leave-one-out improvement stat; null until it is meaningful. */
+  evaluation: ProfileEvaluation | null;
+  /** Progress toward unlocking the stat (evaluable examples / classes). */
+  evalProgress: { n: number; classes: number };
   activeTarget: DrumClass | null;
   testTarget: DrumClass | null;
   feedback: TeachFeedback | null;
@@ -29,6 +38,10 @@ interface Props {
 
 const TARGET_EXAMPLES = 8;
 
+function pct(v: number): string {
+  return `${Math.round(v * 100)}%`;
+}
+
 function timeLabel(createdAt: number): string {
   return new Date(createdAt).toLocaleTimeString([], {
     hour: '2-digit',
@@ -40,6 +53,8 @@ function timeLabel(createdAt: number): string {
 export function TeachPanel({
   counts,
   examples,
+  evaluation,
+  evalProgress,
   activeTarget,
   testTarget,
   feedback,
@@ -59,6 +74,36 @@ export function TeachPanel({
         base model doesn't know — teach them {MIN_KNN_EXAMPLES}+ examples and transcription
         picks them up too.
       </p>
+      {evaluation ? (
+        <div className="teach-status unlocked">
+          <div className="teach-stat">
+            global model alone: <strong>{pct(evaluation.globalAcc)}</strong>
+            {' → '}with your profile:{' '}
+            <strong className="teach-stat-good">{pct(evaluation.blendedAcc)}</strong>
+            <span className="teach-stat-n">
+              {' '}
+              (measured on your {evaluation.nEvaluable} taught examples)
+            </span>
+          </div>
+          <div className="teach-stat-sub">
+            Leave-one-out test: each taught example is scored by the rest of your profile, with
+            and without it. Clap/Tom can only ever be right <em>with</em> your profile — the base
+            model doesn't know them.
+          </div>
+        </div>
+      ) : (
+        <div className="teach-status locked">
+          <div className="teach-stat-sub">
+            {evalProgress.n < MIN_EVAL_EXAMPLES
+              ? `teach ${MIN_EVAL_EXAMPLES - evalProgress.n} more example${
+                  MIN_EVAL_EXAMPLES - evalProgress.n === 1 ? '' : 's'
+                }`
+              : `spread examples across ${MIN_EVAL_CLASSES}+ pads`}{' '}
+            to unlock your accuracy score ({evalProgress.n}/{MIN_EVAL_EXAMPLES} across{' '}
+            {evalProgress.classes} pad{evalProgress.classes === 1 ? '' : 's'} so far)
+          </div>
+        </div>
+      )}
       <div className="teach-pads">
         {DRUM_CLASSES.map((drum) => {
           const active = activeTarget === drum;

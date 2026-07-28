@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { CyborgDrummer, type DrummerHandle } from './components/CyborgDrummer';
 import { MidiControls } from './components/MidiControls';
+import { ReviewStrip, type ReviewChoice } from './components/ReviewStrip';
 import { SequencerGrid } from './components/SequencerGrid';
 import { SettingsPanel } from './components/SettingsPanel';
 import { TeachPanel, type TeachFeedback } from './components/TeachPanel';
@@ -13,7 +14,8 @@ import { encodePatternToSmf, smfFilename } from './lib/midiFile';
 import { loadMidiPrefs, MidiOut, saveMidiPrefs, type MidiDeviceInfo } from './lib/midiOut';
 import { startMetronome, type MetronomeHandle } from './lib/metronome';
 import { MicEngine, type SegmentEvent } from './lib/micEngine';
-import { quantizeHits } from './lib/quantize';
+import { evalProgress, evaluateProfile } from './lib/profileEval';
+import { quantizeHits, type HitPlacement } from './lib/quantize';
 import { Sequencer } from './lib/sequencer';
 import { patternFromHash, patternToShareUrl } from './lib/share';
 import {
@@ -23,7 +25,7 @@ import {
   type AppSettings,
 } from './lib/settings';
 import type { ClassifiedHit, DrumClass, Pattern } from './lib/types';
-import { DRUM_CLASSES, emptyPattern } from './lib/types';
+import { DRUM_CLASSES, DRUM_LABELS, emptyPattern } from './lib/types';
 
 const MAX_RECORD_S = 20;
 const SILENCE_STOP_S = 2.4;
@@ -64,6 +66,12 @@ export default function App() {
   const [midiDeviceId, setMidiDeviceId] = useState<string | null>(null);
   const [midiNote, setMidiNote] = useState<string | null>(null);
   const [showDrummer, setShowDrummer] = useState(true);
+  const [review, setReview] = useState<{
+    hits: ClassifiedHit[];
+    placements: HitPlacement[];
+  } | null>(null);
+  const [corrections, setCorrections] = useState<Record<number, ReviewChoice>>({});
+  const [reviewNote, setReviewNote] = useState<string | null>(null);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const kitRef = useRef<DrumKit | null>(null);
@@ -111,6 +119,14 @@ export default function App() {
     setProfileCounts(classifierRef.current.profile.countsByClass());
     setExamples([...classifierRef.current.profile.list()]);
   }, []);
+
+  // Leave-one-out improvement stat — recomputes on every add/delete/undo/reset
+  // (refreshProfile is the single funnel that updates `examples`).
+  const evaluation = useMemo(
+    () => evaluateProfile(examples, settings.profileWeight),
+    [examples, settings.profileWeight],
+  );
+  const progress = useMemo(() => evalProgress(examples), [examples]);
 
   // Load the classifier once (pure WASM, no user gesture needed).
   useEffect(() => {
@@ -237,7 +253,7 @@ export default function App() {
       // (decided before storing, so a taught example doesn't vote for itself).
       const call = classifier.decide(probs, embedding);
       if (!testing) {
-        await classifier.profile.add(target, embedding, classifier.modelVersion);
+        await classifier.profile.add(target, embedding, classifier.modelVersion, probs);
         refreshProfile();
       }
       setFeedback({
@@ -322,7 +338,7 @@ export default function App() {
     setCountingIn(false);
     const hits = hitsRef.current;
     if (tabRef.current === 'play' && hits.length > 0) {
-      const pat = quantizeHits(
+      const { pattern: pat, placements } = quantizeHits(
         hits,
         recordEpochRef.current !== null
           ? { knownBpm: metroBpm, origin: recordEpochRef.current }
@@ -330,6 +346,9 @@ export default function App() {
       );
       setPattern(pat);
       setHasPattern(true);
+      setReview({ hits: [...hits], placements });
+      setCorrections({});
+      setReviewNote(null);
       startPlayback(pat);
     }
     recordEpochRef.current = null;
@@ -468,7 +487,76 @@ export default function App() {
     stopPlayback();
     setPattern((p) => emptyPattern(p.bpm, p.steps));
     setHasPattern(false);
+    setReview(null);
+    setReviewNote(null);
   };
+
+  // Review-strip correction: fix the grid cell and (for real drums) teach the
+  // profile from the hit's stored embedding + global softmax.
+  const applyCorrection = (hitIndex: number, choice: ReviewChoice) => {
+    if (!review) return;
+    const placement = review.placements.find((p) => p.hitIndex === hitIndex);
+    const hit = review.hits[hitIndex];
+    if (!placement || !hit) return;
+
+    const currentOf = (idx: number): DrumClass | null => {
+      const c = corrections[idx];
+      if (c === undefined) {
+        return review.placements.find((p) => p.hitIndex === idx)?.drum ?? null;
+      }
+      return c === 'not_drum' ? null : c;
+    };
+    const current = currentOf(hitIndex);
+    const chosen: DrumClass | null = choice === 'not_drum' ? null : choice;
+
+    if (chosen === current) {
+      // Confirmations are acknowledged but never stored (no self-training).
+      setReviewNote(
+        chosen ? `confirmed ${DRUM_LABELS[chosen]} ✓ — confirmations aren't stored` : 'already ignored',
+      );
+      return;
+    }
+
+    setPattern((p) => {
+      const next: Pattern = { ...p, grid: { ...p.grid } };
+      const step = placement.step;
+      if (current) {
+        // Clear the old cell only if no other (surviving) hit occupies it.
+        const occupied = review.placements.some(
+          (pl) => pl.hitIndex !== hitIndex && pl.step === step && currentOf(pl.hitIndex) === current,
+        );
+        if (!occupied) {
+          next.grid[current] = [...next.grid[current]];
+          next.grid[current][step] = 0;
+        }
+      }
+      if (chosen) {
+        next.grid[chosen] = [...next.grid[chosen]];
+        next.grid[chosen][step] = Math.max(next.grid[chosen][step], placement.velocity);
+      }
+      seqRef.current?.setPattern(next);
+      return next;
+    });
+    setCorrections((c) => ({ ...c, [hitIndex]: choice }));
+
+    if (chosen && hit.embedding) {
+      void classifierRef.current.profile
+        .add(chosen, hit.embedding, classifierRef.current.modelVersion, hit.rawProbs)
+        .then(refreshProfile);
+      setReviewNote(`learned: that was a ${DRUM_LABELS[chosen]}`);
+    } else if (!chosen) {
+      setReviewNote('removed — nothing stored (no "not a drum" bucket in your profile)');
+    } else {
+      setReviewNote('cell moved (this hit carried no embedding to learn from)');
+    }
+  };
+
+  // Let the review confirmation line fade away on its own.
+  useEffect(() => {
+    if (!reviewNote) return;
+    const t = window.setTimeout(() => setReviewNote(null), 3000);
+    return () => clearTimeout(t);
+  }, [reviewNote]);
 
   return (
     <div className="app">
@@ -599,6 +687,16 @@ export default function App() {
             onPadHit={(d) => void auditionPad(d)}
           />
 
+          {review && (
+            <ReviewStrip
+              hits={review.hits}
+              placements={review.placements}
+              corrections={corrections}
+              note={reviewNote}
+              onChoose={applyCorrection}
+            />
+          )}
+
           <div className="pattern-controls">
             <label className="ctl slider">
               tempo {pattern.bpm.toFixed(1).replace(/\.0$/, '')} bpm
@@ -646,6 +744,8 @@ export default function App() {
         <TeachPanel
           counts={profileCounts}
           examples={examples}
+          evaluation={evaluation}
+          evalProgress={progress}
           activeTarget={teachTarget}
           testTarget={testTarget}
           feedback={feedback}

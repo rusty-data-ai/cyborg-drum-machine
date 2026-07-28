@@ -13,6 +13,13 @@ export interface UserExample {
   embedding: Float32Array;
   modelVersion: string;
   createdAt: number;
+  /**
+   * Global-model softmax (MODEL_DRUM_CLASSES + 'other') captured when the
+   * example was taught. Optional: examples stored before this field existed
+   * simply lack it (IndexedDB stores are schemaless — no migration needed);
+   * they still vote in the KNN but are excluded from the leave-one-out stat.
+   */
+  modelProbs?: number[];
 }
 
 const DB_NAME = 'beatbox';
@@ -74,13 +81,19 @@ export class KnnProfile {
     this.normalized = this.examples.map((e) => normalize(e.embedding));
   }
 
-  async add(label: DrumClass, embedding: Float32Array, modelVersion: string): Promise<void> {
+  async add(
+    label: DrumClass,
+    embedding: Float32Array,
+    modelVersion: string,
+    modelProbs?: number[],
+  ): Promise<void> {
     const example: Omit<UserExample, 'id'> = {
       label,
       // Store as plain array for structured-clone friendliness across browsers.
       embedding: Array.from(embedding) as unknown as Float32Array,
       modelVersion,
       createdAt: Date.now(),
+      ...(modelProbs ? { modelProbs: [...modelProbs] } : {}),
     };
     const db = await openDb();
     const id = await new Promise<number>((resolve, reject) => {

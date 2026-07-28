@@ -45,6 +45,12 @@ export interface ClassifiedHit extends OnsetEvent {
   probs: Record<DrumClass, number>;
   /** Embedding, kept so hits can be re-classified when the user profile changes. */
   embedding?: Float32Array;
+  /**
+   * Raw global-model softmax over MODEL_DRUM_CLASSES + 'other', kept so a
+   * correction stored as a profile example carries what the global model said
+   * (needed by the leave-one-out improvement stat).
+   */
+  rawProbs?: number[];
 }
 
 /** A quantized step-sequencer pattern. */
