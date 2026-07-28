@@ -302,6 +302,123 @@ nav {
   color: var(--led);
 }
 
+/* ---- cyborg drummer ---- */
+
+.drummer-panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 16px 4px;
+}
+
+.drummer-hide {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 1;
+}
+
+.drummer {
+  display: block;
+  width: 100%;
+  max-height: 190px;
+  margin: 0 auto;
+}
+
+.drummer-console {
+  fill: var(--panel-2);
+  stroke: var(--border);
+}
+
+.drummer-pad {
+  fill: var(--cell-off);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.drummer-pad-flash {
+  fill: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.drummer-pad-label {
+  fill: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.drummer-shell {
+  fill: var(--panel-2);
+  stroke: var(--text-dim);
+  stroke-width: 2;
+}
+
+.drummer-visor {
+  fill: var(--accent-2);
+  opacity: 0.85;
+}
+
+.drummer-led {
+  fill: var(--led);
+}
+
+.drummer-antenna {
+  fill: var(--accent);
+}
+
+.drummer-line {
+  stroke: var(--text-dim);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  fill: none;
+}
+
+.drummer-arm {
+  stroke: var(--text);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.drummer-joint {
+  fill: var(--panel-2);
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+}
+
+.drummer-mallet {
+  fill: var(--accent);
+}
+
+/* Idle motion (playing only). Reduced-motion users get a static figure. */
+@media (prefers-reduced-motion: no-preference) {
+  .drummer.playing .drummer-figure {
+    animation: drummer-bob var(--beat-s, 0.5s) ease-in-out infinite alternate;
+  }
+
+  .drummer.playing .drummer-antenna {
+    animation: drummer-blink calc(var(--beat-s, 0.5s) * 2) step-end infinite;
+  }
+}
+
+@keyframes drummer-bob {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(2.5px);
+  }
+}
+
+@keyframes drummer-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
 /* ---- MIDI controls ---- */
 
 .midi-controls {

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
+import { CyborgDrummer, type DrummerHandle } from './components/CyborgDrummer';
 import { MidiControls } from './components/MidiControls';
 import { SequencerGrid } from './components/SequencerGrid';
 import { SettingsPanel } from './components/SettingsPanel';
 import { TeachPanel, type TeachFeedback } from './components/TeachPanel';
 import { HitClassifier } from './lib/classifier';
 import { DrumKit } from './lib/drumSynth';
+import { audioToPerfTime, clockMapping } from './lib/audioTime';
 import type { UserExample } from './lib/knn';
 import { encodePatternToSmf, smfFilename } from './lib/midiFile';
 import { loadMidiPrefs, MidiOut, saveMidiPrefs, type MidiDeviceInfo } from './lib/midiOut';
@@ -61,6 +63,7 @@ export default function App() {
   const [midiDevices, setMidiDevices] = useState<MidiDeviceInfo[]>([]);
   const [midiDeviceId, setMidiDeviceId] = useState<string | null>(null);
   const [midiNote, setMidiNote] = useState<string | null>(null);
+  const [showDrummer, setShowDrummer] = useState(true);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const kitRef = useRef<DrumKit | null>(null);
@@ -80,6 +83,7 @@ export default function App() {
   const settingsRef = useRef(settings);
   const midiRef = useRef<MidiOut | null>(null);
   const midiOnRef = useRef(false);
+  const drummerRef = useRef<DrummerHandle | null>(null);
 
   tabRef.current = tab;
   teachTargetRef.current = teachTarget;
@@ -272,9 +276,12 @@ export default function App() {
       seq.onStep = (step) => setPlayhead(step);
       // Schedule-time fan-out: exact AudioContext times, ahead of the beat.
       seq.onTrigger = (drum, vel, time) => {
+        const stepMs = (60 / patternRef.current.bpm / 4) * 1000;
+        if (drummerRef.current) {
+          drummerRef.current.strike(drum, vel, audioToPerfTime(time, clockMapping(ctx)), stepMs);
+        }
         if (midiOnRef.current && midiRef.current) {
-          const halfStepMs = (60 / patternRef.current.bpm / 4) * 500;
-          midiRef.current.noteAt(drum, vel, time, halfStepMs);
+          midiRef.current.noteAt(drum, vel, time, stepMs / 2);
         }
       };
       seqRef.current = seq;
@@ -565,6 +572,23 @@ export default function App() {
                   ? 'Beatbox now — kick, snare, hats. Recording stops itself when you pause.'
                   : `${hitsRef.current.length} hits captured…`}
             </div>
+          )}
+
+          {showDrummer ? (
+            <div className="drummer-panel">
+              <button
+                className="btn subtle drummer-hide"
+                onClick={() => setShowDrummer(false)}
+                title="Hide the cyborg drummer"
+              >
+                hide
+              </button>
+              <CyborgDrummer ref={drummerRef} playing={playing} bpm={pattern.bpm} />
+            </div>
+          ) : (
+            <button className="btn subtle" onClick={() => setShowDrummer(true)}>
+              show drummer
+            </button>
           )}
 
           <SequencerGrid
