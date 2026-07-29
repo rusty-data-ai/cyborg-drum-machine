@@ -388,8 +388,56 @@ nav {
   stroke-width: 1.5;
 }
 
-.drummer-mallet {
+.drummer-stick {
+  fill: color-mix(in srgb, var(--accent-2) 45%, var(--text));
+}
+
+.drummer-stick-tip {
   fill: var(--accent);
+}
+
+.drummer-gripper {
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.drummer-drum-shell {
+  fill: var(--panel-2);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.drummer-lug {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.drummer-cymbal {
+  fill: color-mix(in srgb, var(--accent-2) 20%, var(--cell-off));
+  stroke: var(--text-dim);
+  stroke-width: 1.2;
+}
+
+.drummer-stand {
+  stroke: var(--text-dim);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  fill: none;
+}
+
+.drummer-seat {
+  fill: var(--panel-2);
+  stroke: var(--text-dim);
+  stroke-width: 2;
+}
+
+.drummer-lid-handle {
+  fill: var(--panel-2);
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
 }
 
 /* Idle motion (playing only). Reduced-motion users get a static figure. */
