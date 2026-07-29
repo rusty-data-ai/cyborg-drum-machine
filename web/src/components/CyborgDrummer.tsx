@@ -34,22 +34,30 @@ interface Props {
 
 // ---- rig geometry (SVG user units) ----
 
-const PAD_XS = [60, 128, 196, 264, 332, 400];
+/**
+ * Where each drum sits, left→right as a real kit around her: clap and tom
+ * out wide, snare tucked in close, the kick front-and-centre under her, and
+ * the two cymbals grouped on the other side. Indexed by DRUM_CLASSES — this
+ * is purely her visual kit layout; the grid/sequencer row order is unchanged.
+ */
+const PAD_XS = [230, 176, 302, 378, 60, 118];
 const PAD_Y = 158;
 /** y where every stick tip lands — the drums' top surface. */
 const HIT_Y = PAD_Y - 13;
 /**
- * Shoulder mounts, one per drum, in DRUM_CLASSES order. Both sides fan out
- * the same way: the top shoulder reaches the farthest pad and the bottom
- * shoulder the closest, so no arm ever crosses another.
+ * Shoulder mounts, one per drum, in DRUM_CLASSES order. Each side of her
+ * torso fans out the same way: the top shoulder reaches that side's farthest
+ * pad and the bottom shoulder its closest, so no arm ever crosses another.
+ * Left shoulders serve clap/tom/snare; right shoulders serve the centre kick
+ * (closest, so bottom) and the two cymbals.
  */
 const SHOULDERS: [number, number][] = [
-  [214, 78], // kick — farthest left, top shoulder
-  [211, 92], // snare
-  [214, 106], // closed hat — closest left, bottom shoulder
-  [246, 106], // open hat — closest right, bottom shoulder
-  [249, 92], // clap
-  [246, 78], // tom — farthest right, top shoulder
+  [246, 106], // kick — closest to the right shoulders, bottom shoulder
+  [214, 106], // snare — closest left, bottom shoulder
+  [249, 92], // closed hat — middle right
+  [246, 78], // open hat — farthest right, top shoulder
+  [214, 78], // clap — farthest left, top shoulder
+  [211, 92], // tom — middle left
 ];
 const PAD_SHORT: Record<DrumClass, string> = {
   kick: 'KICK',
@@ -101,7 +109,10 @@ const LIMBS: LimbGeom[] = DRUM_CLASSES.map((drum, i) => {
     sy,
     angle: (Math.atan2(dy, dx) * 180) / Math.PI,
     len: Math.hypot(dx, dy),
-    sign: padX < 230 ? 1 : -1,
+    // An arm pointing left lifts clockwise (+), one pointing right lifts
+    // counter-clockwise (−) — judged by the arm's own direction, not the
+    // pad's side of the stage (the centre kick is reached from the right).
+    sign: dx < 0 ? 1 : -1,
     padX,
   };
 });
@@ -166,13 +177,21 @@ export function CyborgDrummer({ playing, bpm, ref }: Props) {
     [],
   );
 
+  // Her antenna light blinks in time while she plays: once per beat, easing
+  // to every other beat at high tempo so it never strobes. Always an integer
+  // number of beats, so the blink stays locked to the pulse.
+  const blinkBeats = bpm >= 140 ? 2 : 1;
+
   return (
     <svg
       className={`drummer ${playing ? 'playing' : ''}`}
       viewBox="0 0 460 196"
       role="img"
       aria-label="cyborg drummer at her kit"
-      style={{ ['--beat-s' as string]: `${60 / bpm}s` }}
+      style={{
+        ['--beat-s' as string]: `${60 / bpm}s`,
+        ['--blink-s' as string]: `${(60 / bpm) * blinkBeats}s`,
+      }}
     >
       {/* riser the kit stands on */}
       <rect x={28} y={PAD_Y - 4} width={404} height={20} rx={6} className="drummer-console" />
