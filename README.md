@@ -38,6 +38,9 @@ bash ml/download_data.sh
   Each example is a deletable chip; "test me" mode shows live predictions without storing.
 - **Clap and Tom pads** are KNN-only: the base model never saw them, so they join
   transcription once you teach them 4+ examples each. Until then they're manual grid rows.
+- **export / import profile** (Teach panel) — downloads your taught examples + settings as
+  `beatbox-profile-YYYYMMDD.json`; importing merges it back (duplicates are skipped), so you
+  can back up your profile or move it to another device by hand. No server involved.
 - **share** — copies a link that carries the whole beat in the URL fragment; opening
   it loads the pattern instantly. No server involved — the beat lives in the link.
 - **sensitivity** — onset detector threshold, turn up if quiet hits get missed. The gear

@@ -1,3 +1,4 @@
+import { useRef, type ReactNode } from 'react';
 import type { UserExample } from '../lib/knn';
 import { MIN_KNN_EXAMPLES } from '../lib/blend';
 import {
@@ -34,6 +35,14 @@ interface Props {
   onDeleteExample: (id: number) => void;
   onUndoLast: () => void;
   onClearProfile: () => void;
+  /** Download the profile as a beatbox-profile-YYYYMMDD.json backup. */
+  onExportProfile: () => void;
+  /** Merge a previously exported profile file (accounts plan Phase 0). */
+  onImportProfile: (file: File) => void;
+  /** Result of the last export/import ("imported 12 examples", errors, …). */
+  transferNote: string | null;
+  /** Extra content (account/sync UI) rendered at the bottom of the panel. */
+  accountSlot?: ReactNode;
 }
 
 const TARGET_EXAMPLES = 8;
@@ -63,7 +72,12 @@ export function TeachPanel({
   onDeleteExample,
   onUndoLast,
   onClearProfile,
+  onExportProfile,
+  onImportProfile,
+  transferNote,
+  accountSlot,
 }: Props) {
+  const importInputRef = useRef<HTMLInputElement>(null);
   const total = DRUM_CLASSES.reduce((a, c) => a + counts[c], 0);
   return (
     <div className="teach">
@@ -189,6 +203,39 @@ export function TeachPanel({
           </span>
         )}
       </div>
+      <div className="teach-transfer">
+        <span className="teach-transfer-label">
+          Backup — your profile as a file, restorable on any device:
+        </span>
+        <button
+          className="btn subtle"
+          onClick={onExportProfile}
+          disabled={total === 0}
+          title="Download your taught examples + settings as a JSON file"
+        >
+          export profile
+        </button>
+        <button
+          className="btn subtle"
+          onClick={() => importInputRef.current?.click()}
+          title="Merge a previously exported profile file into this browser"
+        >
+          import profile
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onImportProfile(file);
+            e.target.value = ''; // allow re-importing the same file
+          }}
+        />
+        {transferNote && <span className="teach-transfer-note">{transferNote}</span>}
+      </div>
+      {accountSlot}
     </div>
   );
 }

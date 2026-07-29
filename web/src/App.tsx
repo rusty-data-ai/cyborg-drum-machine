@@ -15,6 +15,12 @@ import { loadMidiPrefs, MidiOut, saveMidiPrefs, type MidiDeviceInfo } from './li
 import { startMetronome, type MetronomeHandle } from './lib/metronome';
 import { MicEngine, type SegmentEvent } from './lib/micEngine';
 import { evalProgress, evaluateProfile } from './lib/profileEval';
+import {
+  encodeProfileFile,
+  parseProfileFile,
+  planMerge,
+  profileFilename,
+} from './lib/profileFile';
 import { quantizeHits, type HitPlacement } from './lib/quantize';
 import { Sequencer } from './lib/sequencer';
 import { patternFromHash, patternToShareUrl } from './lib/share';
@@ -66,6 +72,7 @@ export default function App() {
   const [midiDeviceId, setMidiDeviceId] = useState<string | null>(null);
   const [midiNote, setMidiNote] = useState<string | null>(null);
   const [showDrummer, setShowDrummer] = useState(true);
+  const [transferNote, setTransferNote] = useState<string | null>(null);
   const [review, setReview] = useState<{
     hits: ClassifiedHit[];
     placements: HitPlacement[];
@@ -457,6 +464,53 @@ export default function App() {
     [armTeachMic],
   );
 
+  // ---- Profile backup (accounts plan Phase 0): export/import as a file ----
+
+  const exportProfile = useCallback(() => {
+    const clf = classifierRef.current;
+    const json = encodeProfileFile(clf.modelVersion, clf.profile.list(), settingsRef.current);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = profileFilename();
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTransferNote(`exported ${clf.profile.size} example${clf.profile.size === 1 ? '' : 's'}`);
+  }, []);
+
+  const importProfile = useCallback(
+    async (file: File) => {
+      const clf = classifierRef.current;
+      const parsed = parseProfileFile(await file.text());
+      if ('error' in parsed) {
+        setTransferNote(`import failed: ${parsed.error}`);
+        return;
+      }
+      if (!clf.ready) {
+        setTransferNote('import failed: classifier model not loaded');
+        return;
+      }
+      if (parsed.file.modelVersion !== clf.modelVersion) {
+        setTransferNote(
+          `import failed: that file is from model ${parsed.file.modelVersion}; this app runs ` +
+            `${clf.modelVersion} — examples don't transfer across model versions`,
+        );
+        return;
+      }
+      const plan = planMerge(clf.profile.list(), parsed.file.examples);
+      await clf.profile.importExamples(plan.toAdd, clf.modelVersion);
+      refreshProfile();
+      if (parsed.file.settings) setSettings(parsed.file.settings);
+      setTransferNote(
+        `imported ${plan.toAdd.length} example${plan.toAdd.length === 1 ? '' : 's'}` +
+          (plan.duplicates > 0 ? ` · skipped ${plan.duplicates} duplicate${plan.duplicates === 1 ? '' : 's'}` : '') +
+          (parsed.file.settings ? ' · settings applied' : ''),
+      );
+    },
+    [refreshProfile],
+  );
+
   const undoLastExample = useCallback(() => {
     const list = classifierRef.current.profile.list();
     if (list.length === 0) return;
@@ -758,6 +812,9 @@ export default function App() {
           onClearProfile={() => {
             void classifierRef.current.profile.clear().then(refreshProfile);
           }}
+          onExportProfile={exportProfile}
+          onImportProfile={(f) => void importProfile(f)}
+          transferNote={transferNote}
         />
       )}
 
