@@ -163,6 +163,13 @@ export class KnnProfile {
     this.normalized.push(normalize(stored.embedding));
   }
 
+  /** Remove rows by their global uuid (sync tombstones). */
+  async removeByUuids(uuids: readonly string[]): Promise<void> {
+    const want = new Set(uuids);
+    const ids = this.examples.filter((e) => e.uuid && want.has(e.uuid)).map((e) => e.id);
+    for (const id of ids) await this.remove(id);
+  }
+
   async remove(id: number): Promise<void> {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
+import { AccountPanel } from './components/AccountPanel';
 import { CyborgDrummer, type DrummerHandle } from './components/CyborgDrummer';
 import { MidiControls } from './components/MidiControls';
 import { ReviewStrip, type ReviewChoice } from './components/ReviewStrip';
@@ -30,6 +31,9 @@ import {
   toWorkletConfig,
   type AppSettings,
 } from './lib/settings';
+import { SyncApi, type SyncUser } from './lib/syncApi';
+import { syncApiBase } from './lib/syncConfig';
+import { loadTombstones, SyncEngine, type SyncStatus } from './lib/syncEngine';
 import type { ClassifiedHit, DrumClass, Pattern } from './lib/types';
 import { DRUM_CLASSES, DRUM_LABELS, emptyPattern } from './lib/types';
 
@@ -40,6 +44,12 @@ const SILENCE_STOP_S = 2.4;
 const sharedPattern = patternFromHash(window.location.hash);
 
 type Tab = 'play' | 'teach';
+
+// Accounts/sync (plan Phase 1) is present only when a worker URL is configured
+// at build time; otherwise the app is the zero-backend product, unchanged.
+const SYNC_BASE = syncApiBase();
+const SYNC_ENABLED_KEY = 'beatbox-sync-enabled';
+const migratedKey = (userId: string) => `beatbox-sync-migrated:${userId}`;
 
 export default function App() {
   const [modelReady, setModelReady] = useState(false);
@@ -73,6 +83,12 @@ export default function App() {
   const [midiNote, setMidiNote] = useState<string | null>(null);
   const [showDrummer, setShowDrummer] = useState(true);
   const [transferNote, setTransferNote] = useState<string | null>(null);
+  const [account, setAccount] = useState<SyncUser | null>(null);
+  const [syncOn, setSyncOn] = useState(
+    () => typeof localStorage !== 'undefined' && localStorage.getItem(SYNC_ENABLED_KEY) === '1',
+  );
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [migrationNeeded, setMigrationNeeded] = useState(false);
   const [review, setReview] = useState<{
     hits: ClassifiedHit[];
     placements: HitPlacement[];
@@ -464,6 +480,125 @@ export default function App() {
     [armTeachMic],
   );
 
+  // ---- Accounts + sync (accounts plan Phase 1, opt-in) ----
+
+  const syncApi = useMemo(() => (SYNC_BASE ? new SyncApi(SYNC_BASE) : null), []);
+  const syncEngine = useMemo(() => {
+    if (!syncApi) return null;
+    return new SyncEngine({
+      api: syncApi,
+      modelVersion: () => classifierRef.current.modelVersion,
+      listLocal: () => classifierRef.current.profile.list(),
+      importLocal: async (examples, modelVersion) => {
+        await classifierRef.current.profile.importExamples(examples, modelVersion);
+        refreshProfile();
+      },
+      removeLocalByUuids: async (uuids) => {
+        await classifierRef.current.profile.removeByUuids(uuids);
+        refreshProfile();
+      },
+      onStatus: setSyncStatus,
+    });
+  }, [syncApi, refreshProfile]);
+  const pulledRef = useRef(false);
+
+  // Who am I? (Session cookie survives the OAuth redirect and reloads.)
+  useEffect(() => {
+    if (!syncApi) return;
+    void syncApi.me().then(setAccount);
+  }, [syncApi]);
+
+  // First sign-in on a device with local data: prompt merge/replace (plan §5).
+  // Otherwise: pull once per page load when sync is on (plan §3 cadence).
+  useEffect(() => {
+    if (!syncEngine || !account || !modelReady) return;
+    if (localStorage.getItem(migratedKey(account.id)) !== '1') {
+      if (classifierRef.current.profile.size > 0) {
+        setMigrationNeeded(true);
+        return;
+      }
+      localStorage.setItem(migratedKey(account.id), '1');
+    }
+    setMigrationNeeded(false);
+    if (syncOn && !pulledRef.current) {
+      pulledRef.current = true;
+      void syncEngine.pullOnce();
+    }
+  }, [syncEngine, account, modelReady, syncOn]);
+
+  // Push on change, debounced ~10 s. Idempotent server-side (union by uuid).
+  const syncActive = account !== null && syncOn && !migrationNeeded;
+  useEffect(() => {
+    if (!syncEngine || !syncActive || !modelReady) return;
+    if (examples.length === 0 && loadTombstones().length === 0) return;
+    syncEngine.schedulePush();
+  }, [examples, syncEngine, syncActive, modelReady]);
+
+  const handleToggleSync = useCallback(
+    (on: boolean) => {
+      localStorage.setItem(SYNC_ENABLED_KEY, on ? '1' : '0');
+      setSyncOn(on);
+      if (on && syncEngine && account && !migrationNeeded) {
+        pulledRef.current = true;
+        void syncEngine.pullOnce();
+      }
+    },
+    [syncEngine, account, migrationNeeded],
+  );
+
+  const handleMigrate = useCallback(
+    async (mode: 'merge' | 'replace') => {
+      if (!syncEngine || !account) return;
+      if (mode === 'replace') {
+        if (!confirm("Replace this device's taught examples with your account's profile?")) {
+          return;
+        }
+        // Deliberately no tombstones: this discards local copies, it doesn't
+        // delete anything from the account.
+        await classifierRef.current.profile.clear();
+        refreshProfile();
+      }
+      localStorage.setItem(migratedKey(account.id), '1');
+      setMigrationNeeded(false);
+      localStorage.setItem(SYNC_ENABLED_KEY, '1');
+      setSyncOn(true);
+      pulledRef.current = true;
+      if (mode === 'merge') await syncEngine.pushNow();
+      await syncEngine.pullOnce();
+    },
+    [syncEngine, account, refreshProfile],
+  );
+
+  const handleSignOut = useCallback(async () => {
+    if (!syncApi) return;
+    await syncApi.signOut();
+    // Local data stays — it's the user's device and the app keeps working (§5).
+    setAccount(null);
+    setSyncStatus(null);
+  }, [syncApi]);
+
+  const handleDeleteAccount = useCallback(async () => {
+    if (!syncApi || !account) return;
+    if (
+      !confirm(
+        'Delete your account and everything stored on the server (examples, settings, beats)? ' +
+          'Examples taught on this device stay on this device.',
+      )
+    ) {
+      return;
+    }
+    const ok = await syncApi.deleteAccount();
+    if (ok) {
+      localStorage.removeItem(migratedKey(account.id));
+      localStorage.setItem(SYNC_ENABLED_KEY, '0');
+      setSyncOn(false);
+      setAccount(null);
+      setSyncStatus(null);
+    } else {
+      setSyncStatus({ state: 'error', detail: 'account deletion failed' });
+    }
+  }, [syncApi, account]);
+
   // ---- Profile backup (accounts plan Phase 0): export/import as a file ----
 
   const exportProfile = useCallback(() => {
@@ -514,8 +649,10 @@ export default function App() {
   const undoLastExample = useCallback(() => {
     const list = classifierRef.current.profile.list();
     if (list.length === 0) return;
-    void classifierRef.current.profile.remove(list[list.length - 1].id).then(refreshProfile);
-  }, [refreshProfile]);
+    const last = list[list.length - 1];
+    if (last.uuid) syncEngine?.recordTombstones([last.uuid]);
+    void classifierRef.current.profile.remove(last.id).then(refreshProfile);
+  }, [refreshProfile, syncEngine]);
 
   const switchTab = (t: Tab) => {
     if (recording) stopRecording();
@@ -806,15 +943,39 @@ export default function App() {
           onSelectTarget={(d) => void handleTeachTarget(d)}
           onSelectTest={(d) => void handleTestTarget(d)}
           onDeleteExample={(id) => {
+            const ex = classifierRef.current.profile.list().find((e) => e.id === id);
+            if (ex?.uuid) syncEngine?.recordTombstones([ex.uuid]);
             void classifierRef.current.profile.remove(id).then(refreshProfile);
           }}
           onUndoLast={undoLastExample}
           onClearProfile={() => {
+            const uuids = classifierRef.current.profile
+              .list()
+              .map((e) => e.uuid)
+              .filter((u): u is string => !!u);
+            if (uuids.length > 0) syncEngine?.recordTombstones(uuids);
             void classifierRef.current.profile.clear().then(refreshProfile);
           }}
           onExportProfile={exportProfile}
           onImportProfile={(f) => void importProfile(f)}
           transferNote={transferNote}
+          accountSlot={
+            syncApi ? (
+              <AccountPanel
+                user={account}
+                syncOn={syncOn}
+                status={syncStatus}
+                migrationNeeded={migrationNeeded}
+                localCount={examples.length}
+                signInUrl={(p) => syncApi.signInUrl(p)}
+                exportUrl={syncApi.exportUrl()}
+                onToggleSync={handleToggleSync}
+                onMigrate={(m) => void handleMigrate(m)}
+                onSignOut={() => void handleSignOut()}
+                onDeleteAccount={() => void handleDeleteAccount()}
+              />
+            ) : undefined
+          }
         />
       )}
 

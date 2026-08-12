@@ -1,6 +1,10 @@
 # Accounts & per-user model persistence — plan
 
-Design doc only; nothing here is built. Today a user's personal model — KNN
+Sections 1–8 are the original design (issue #4). Implementation status lives
+in [§9](#9-implementation-status--go-live-runbook): Phase 0 is shipped and
+Phase 1 is code-complete but **deploy-gated on owner credentials**.
+
+Today a user's personal model — KNN
 examples in IndexedDB (`web/src/lib/knn.ts`), tuned settings
 (`web/src/lib/settings.ts`), their beats — lives in one browser. Clear site
 data or switch devices and the "AI that learned your sounds" is gone. This
@@ -314,3 +318,118 @@ underneath.
   everywhere" button in v1?
 - When Phase 3 lands, does the head sync *replace* example sync for users at
   the cap (weights-only roaming), or always ride alongside?
+
+## 9. Implementation status & go-live runbook
+
+### Status
+
+- **Phase 0 — shipped** (issue #5): Teach-panel export/import of
+  `beatbox-profile-YYYYMMDD.json`. Codec + merge live in
+  `web/src/lib/profileFile.ts` (`formatVersion: 1`; unknown versions rejected
+  whole); examples carry client-generated uuids (`web/src/lib/uuid.ts`), with
+  legacy IndexedDB rows upgraded lazily on profile load — no migration, same
+  mechanism as `modelProbs`. Import refuses files from a different
+  `modelVersion` (embeddings don't survive a model bump) and applies imported
+  settings through the existing clamping parser.
+- **Phase 1 — code-complete, deploy-gated** (issue #6): worker in `worker/`
+  (OAuth per §1, D1 per §3, examples-only sync, export, transactional
+  delete-account per §2), client account UI + sync engine behind a build-time
+  flag. Nothing is deployed; the deployed static site is unchanged until the
+  runbook below is executed.
+
+### What shipped where
+
+| Piece | Location |
+|---|---|
+| D1 schema (§3, verbatim) | `worker/migrations/0001_init.sql` |
+| OAuth (Google + GitHub, hand-rolled ~50 lines/provider) | `worker/src/providers.ts` — the `OAuthProvider` interface is the test seam; `FAKE_OAUTH=1` (test-only) swaps in a fake |
+| Sessions (90-day sliding, HttpOnly/Secure/SameSite=Lax cookie) | `worker/src/sessions.ts` — expiry slides at most ~daily to save D1 writes |
+| Sync + export + delete-account | `worker/src/sync.ts`, routed in `worker/src/index.ts` |
+| Client feature flag | `web/src/lib/syncConfig.ts` — sync UI exists only when `VITE_SYNC_API_URL` is set at build time |
+| Client sync engine (§3 cadence: pull on load, push debounced 10 s) | `web/src/lib/syncEngine.ts` + `syncApi.ts` |
+| Account UI (§2 privacy copy verbatim, §5 merge/replace prompt) | `web/src/components/AccountPanel.tsx`, rendered inside the Teach panel |
+| Tests | `worker/test/*.spec.ts` (25 integration tests in workerd + local D1 via `@cloudflare/vitest-pool-workers`; `(cd worker && npm test)`), `web/src/lib/{profileFile,syncEngine}.test.ts`, `web/e2e/{profileFile,account}.spec.ts` |
+
+### Implementation decisions (per §8 open questions + details §1–§7 left open)
+
+- **Account linking**: none in v1. The same person via Google and GitHub is
+  two accounts (covered by a test). An explicit merge can come later; linking
+  silently by email address is a account-takeover-shaped risk we skip.
+- **Correction provenance** (`source: 'correction'`): **not stored**. §2
+  already defines correction-sourced examples as ordinary `UserExample`s and
+  nothing would read the flag today; the file format is versioned, so a later
+  `formatVersion` bump can add it if per-source weighting ever materializes.
+- **Caps** (§7 risks): 1,000 live example rows per user (push rejected whole
+  with `profile full…`, surfaced in the sync status line); 2 MB request body;
+  ≤1,000 upserts / ≤2,000 tombstones per push. No Turnstile until abused.
+- **Sessions**: 90-day sliding as designed; no "sign out everywhere" in v1
+  (deleting the account revokes everything; sessions table supports it later).
+- **Old-model-version retention**: the schema keeps per-version rows, but the
+  90-day scheduled purge is **not** implemented — at launch scale, stale rows
+  are noise. Add a Workers cron when the second model version ships.
+- **GDPR**: treat embeddings as personal data; export + real deletion exist
+  from day one (§2). No DPA page / EU data-location work in v1.
+- **Deletion semantics on the client**: deleting an example (chip ×, undo,
+  reset profile) records its uuid in a local tombstone list
+  (`localStorage['beatbox-sync-tombstones']`) that is pushed and cleared on
+  confirmation — deletes propagate across devices per §3. The §5 *replace*
+  migration path clears local rows **without** tombstoning (it discards local
+  copies; it must not delete the account profile).
+- **Tombstones for never-synced uuids**: deleting a row the server has never
+  seen inserts a bare tombstone row (label `''`, empty BLOB) so the deletion
+  still beats a live copy pushed later by an offline device.
+- **Server export shape**: `GET /api/export` returns the Phase 0 file format;
+  the primary `modelVersion`/`examples` are the version with the newest
+  activity, and any older versions ride along under an `otherVersions` key
+  (unknown top-level keys are ignored by the parser, so the file stays
+  importable).
+- **Same-origin requirement**: the worker must be routed under `/api/*` on
+  the **same origin** as the app. SameSite=Lax cookies and the deliberate
+  absence of CORS headers depend on it; a cross-origin deployment would need
+  both revisited.
+- **Tooling pin**: `worker/package.json` pins `wrangler` 4.85.0 — the last
+  line that runs on Node 20 (this repo's toolchain); wrangler ≥4.90 requires
+  Node ≥22. `compatibility_date` in `wrangler.toml` must stay ≤ the workerd
+  bundled with that pin (currently 2026-04). On a Node ≥22 machine the pin
+  can move to latest. Tests are unaffected (vitest-pool-workers bundles its
+  own workerd).
+
+### Local development (no Cloudflare account)
+
+```bash
+(cd worker && npm install && npm test)          # 25 integration tests, local D1
+(cd worker && npx wrangler d1 migrations apply cyborg-drum-machine --local)
+(cd worker && npm run dev)                      # http://localhost:8787/api/health
+```
+
+OAuth needs real client ids even in dev; for UI work against the fake
+provider, run `wrangler dev` with `FAKE_OAUTH=1` in a `.dev.vars` file
+(never in production config) and build the web app with
+`VITE_SYNC_API_URL=http://localhost:8787/api` behind a dev proxy.
+
+### Go-live runbook (owner, ~30 minutes; keeps issue #6 open until done)
+
+1. **D1**: `(cd worker && npx wrangler d1 create cyborg-drum-machine)` →
+   paste the printed `database_id` into `worker/wrangler.toml` →
+   `(cd worker && npx wrangler d1 migrations apply cyborg-drum-machine --remote)`.
+2. **Google OAuth app** (console.cloud.google.com → Credentials → OAuth client
+   ID, type *Web application*): authorized redirect URI
+   `https://<app-origin>/api/auth/google/callback`.
+3. **GitHub OAuth app** (github.com → Settings → Developer settings): callback
+   URL `https://<app-origin>/api/auth/github/callback`.
+4. **Secrets**: `(cd worker && npx wrangler secret put GOOGLE_CLIENT_ID)` and
+   likewise `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`.
+   Set `APP_ORIGIN` in `wrangler.toml` [vars] to the real app origin
+   (e.g. `https://cyborg-drum-machine.pages.dev`).
+5. **Deploy + route on the app's origin**: `(cd worker && npx wrangler deploy)`,
+   then route `/api/*` of the app's domain to the worker (custom domain: a
+   Workers route on the zone; pages.dev only: serve app + API from the same
+   workers.dev/custom domain — same-origin is a hard requirement, see above).
+6. **Rebuild the app with sync on**: set `VITE_SYNC_API_URL=/api` in the CI
+   build env (and locally) → deploy Pages as usual. Unset it to kill-switch
+   the feature (plan §7 rollback): the UI vanishes, server data stays
+   exportable.
+7. **Smoke test**: sign in with both providers; teach an example; verify the
+   row lands in D1 (`wrangler d1 execute … "SELECT COUNT(*) FROM examples"`),
+   pull it on a second browser, export, delete account, confirm 0 rows.
+8. Close issue #6.

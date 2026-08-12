@@ -19,3 +19,4 @@ web/dist/
 web/public/ort/
 web/test-results/
 web/playwright-report/
+worker/.wrangler/
