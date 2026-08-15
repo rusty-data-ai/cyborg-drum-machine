@@ -1,5 +1,11 @@
+import { useRef, type ReactNode } from 'react';
 import type { UserExample } from '../lib/knn';
 import { MIN_KNN_EXAMPLES } from '../lib/blend';
+import {
+  MIN_EVAL_CLASSES,
+  MIN_EVAL_EXAMPLES,
+  type ProfileEvaluation,
+} from '../lib/profileEval';
 import type { DrumClass } from '../lib/types';
 import { DRUM_CLASSES, DRUM_LABELS, isModelDrumClass } from '../lib/types';
 
@@ -17,6 +23,10 @@ export interface TeachFeedback {
 interface Props {
   counts: Record<DrumClass, number>;
   examples: readonly UserExample[];
+  /** Leave-one-out improvement stat; null until it is meaningful. */
+  evaluation: ProfileEvaluation | null;
+  /** Progress toward unlocking the stat (evaluable examples / classes). */
+  evalProgress: { n: number; classes: number };
   activeTarget: DrumClass | null;
   testTarget: DrumClass | null;
   feedback: TeachFeedback | null;
@@ -25,9 +35,21 @@ interface Props {
   onDeleteExample: (id: number) => void;
   onUndoLast: () => void;
   onClearProfile: () => void;
+  /** Download the profile as a beatbox-profile-YYYYMMDD.json backup. */
+  onExportProfile: () => void;
+  /** Merge a previously exported profile file (accounts plan Phase 0). */
+  onImportProfile: (file: File) => void;
+  /** Result of the last export/import ("imported 12 examples", errors, …). */
+  transferNote: string | null;
+  /** Extra content (account/sync UI) rendered at the bottom of the panel. */
+  accountSlot?: ReactNode;
 }
 
 const TARGET_EXAMPLES = 8;
+
+function pct(v: number): string {
+  return `${Math.round(v * 100)}%`;
+}
 
 function timeLabel(createdAt: number): string {
   return new Date(createdAt).toLocaleTimeString([], {
@@ -40,6 +62,8 @@ function timeLabel(createdAt: number): string {
 export function TeachPanel({
   counts,
   examples,
+  evaluation,
+  evalProgress,
   activeTarget,
   testTarget,
   feedback,
@@ -48,7 +72,12 @@ export function TeachPanel({
   onDeleteExample,
   onUndoLast,
   onClearProfile,
+  onExportProfile,
+  onImportProfile,
+  transferNote,
+  accountSlot,
 }: Props) {
+  const importInputRef = useRef<HTMLInputElement>(null);
   const total = DRUM_CLASSES.reduce((a, c) => a + counts[c], 0);
   return (
     <div className="teach">
@@ -59,6 +88,36 @@ export function TeachPanel({
         base model doesn't know — teach them {MIN_KNN_EXAMPLES}+ examples and transcription
         picks them up too.
       </p>
+      {evaluation ? (
+        <div className="teach-status unlocked">
+          <div className="teach-stat">
+            global model alone: <strong>{pct(evaluation.globalAcc)}</strong>
+            {' → '}with your profile:{' '}
+            <strong className="teach-stat-good">{pct(evaluation.blendedAcc)}</strong>
+            <span className="teach-stat-n">
+              {' '}
+              (measured on your {evaluation.nEvaluable} taught examples)
+            </span>
+          </div>
+          <div className="teach-stat-sub">
+            Leave-one-out test: each taught example is scored by the rest of your profile, with
+            and without it. Clap/Tom can only ever be right <em>with</em> your profile — the base
+            model doesn't know them.
+          </div>
+        </div>
+      ) : (
+        <div className="teach-status locked">
+          <div className="teach-stat-sub">
+            {evalProgress.n < MIN_EVAL_EXAMPLES
+              ? `teach ${MIN_EVAL_EXAMPLES - evalProgress.n} more example${
+                  MIN_EVAL_EXAMPLES - evalProgress.n === 1 ? '' : 's'
+                }`
+              : `spread examples across ${MIN_EVAL_CLASSES}+ pads`}{' '}
+            to unlock your accuracy score ({evalProgress.n}/{MIN_EVAL_EXAMPLES} across{' '}
+            {evalProgress.classes} pad{evalProgress.classes === 1 ? '' : 's'} so far)
+          </div>
+        </div>
+      )}
       <div className="teach-pads">
         {DRUM_CLASSES.map((drum) => {
           const active = activeTarget === drum;
@@ -144,6 +203,39 @@ export function TeachPanel({
           </span>
         )}
       </div>
+      <div className="teach-transfer">
+        <span className="teach-transfer-label">
+          Backup — your profile as a file, restorable on any device:
+        </span>
+        <button
+          className="btn subtle"
+          onClick={onExportProfile}
+          disabled={total === 0}
+          title="Download your taught examples + settings as a JSON file"
+        >
+          export profile
+        </button>
+        <button
+          className="btn subtle"
+          onClick={() => importInputRef.current?.click()}
+          title="Merge a previously exported profile file into this browser"
+        >
+          import profile
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onImportProfile(file);
+            e.target.value = ''; // allow re-importing the same file
+          }}
+        />
+        {transferNote && <span className="teach-transfer-note">{transferNote}</span>}
+      </div>
+      {accountSlot}
     </div>
   );
 }

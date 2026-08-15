@@ -38,6 +38,9 @@ bash ml/download_data.sh
   Each example is a deletable chip; "test me" mode shows live predictions without storing.
 - **Clap and Tom pads** are KNN-only: the base model never saw them, so they join
   transcription once you teach them 4+ examples each. Until then they're manual grid rows.
+- **export / import profile** (Teach panel) — downloads your taught examples + settings as
+  `beatbox-profile-YYYYMMDD.json`; importing merges it back (duplicates are skipped), so you
+  can back up your profile or move it to another device by hand. No server involved.
 - **share** — copies a link that carries the whole beat in the URL fragment; opening
   it loads the pattern instantly. No server involved — the beat lives in the link.
 - **sensitivity** — onset detector threshold, turn up if quiet hits get missed. The gear
@@ -49,18 +52,22 @@ bash ml/download_data.sh
 | Path | What |
 |---|---|
 | `web/` | Vite + React + TS app. `src/lib/` has the audio/ML runtime; `public/onset-processor.js` is the AudioWorklet onset detector. |
+| `worker/` | Cloudflare Worker + D1: opt-in accounts (Google/GitHub OAuth) + profile sync. **Code-complete but not deployed** — the live app has no backend until the owner runbook in `docs/accounts-plan.md` §9 runs; without it the sync UI doesn't render at all. |
 | `ml/` | PyTorch training pipeline. In-graph mel frontend (conv-STFT) so the browser feeds raw waveforms — no feature-mismatch class of bugs. |
-| `docs/` | `research.md` (prior-art survey), `data.md` (datasets + licenses), `design.md` (architecture + rationale). |
+| `docs/` | `research.md` (prior-art survey), `data.md` (datasets + licenses), `design.md` (architecture + rationale), `accounts-plan.md` (accounts/sync design + status). |
 | `data/` | Downloaded datasets (gitignored; `ml/download_data.sh` restores). |
 
 ## Tests
 
 ```bash
-cd web && npm test
+cd web && npm test        # unit; npx playwright test for e2e
+cd worker && npm test     # accounts/sync API — runs in workerd + local D1, no Cloudflare account
 ```
 
-Covers tempo estimation/quantization, the resampler, and the onset-detector worklet
-driven with synthetic percussive audio in a stubbed worklet scope.
+Web tests cover tempo estimation/quantization, the resampler, the onset-detector worklet
+(synthetic percussive audio in a stubbed worklet scope), the profile-file codec, and the
+sync engine. Worker tests exercise auth/session/sync/delete flows against a fake OAuth
+provider.
 
 ## Model
 

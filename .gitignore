@@ -17,3 +17,6 @@ web/dist/
 .DS_Store
 *.log
 web/public/ort/
+web/test-results/
+web/playwright-report/
+worker/.wrangler/

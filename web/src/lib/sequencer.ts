@@ -1,5 +1,5 @@
 import type { DrumKit } from './drumSynth';
-import type { Pattern } from './types';
+import type { DrumClass, Pattern } from './types';
 import { DRUM_CLASSES } from './types';
 
 /**
@@ -16,6 +16,13 @@ export class Sequencer {
   private nextStep = 0;
   /** Called (from the timer thread, slightly ahead of audio) so the UI can animate the playhead. */
   onStep: ((step: number, time: number) => void) | null = null;
+  /**
+   * Called synchronously at *schedule* time (up to SCHEDULE_AHEAD_S ahead of
+   * the beat) for every active cell, carrying the exact AudioContext time the
+   * hit will sound. Consumers (MIDI out, drummer animation) use the lead to
+   * schedule precisely against the audio clock; keep handlers cheap.
+   */
+  onTrigger: ((drum: DrumClass, velocity: number, time: number) => void) | null = null;
 
   private static readonly LOOKAHEAD_MS = 25;
   private static readonly SCHEDULE_AHEAD_S = 0.12;
@@ -67,7 +74,10 @@ export class Sequencer {
   private scheduleStep(step: number, time: number): void {
     for (const drum of DRUM_CLASSES) {
       const vel = this.pattern.grid[drum][step] ?? 0;
-      if (vel > 0) this.kit.trigger(drum, time, vel);
+      if (vel > 0) {
+        this.kit.trigger(drum, time, vel);
+        this.onTrigger?.(drum, vel, time);
+      }
     }
     const delayMs = Math.max(0, (time - this.ctx.currentTime) * 1000);
     if (this.onStep) {

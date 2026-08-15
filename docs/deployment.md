@@ -167,13 +167,13 @@ Worker in front of the same Pages project. Design:
 | Calibration profiles (label + 128-d embedding + modelVersion) | **Opt-in only, later** | embeddings are derived features, not audio — but a "sync profile" toggle must be explicit, additive, and off by default; footer copy stays true |
 | Tuning settings (localStorage) | Piggyback on profile sync | trivial |
 
-**Cross-device profile sync (phase 3, designed only)**: the natural follow-on
-once accounts exist. Store the KNN examples keyed by user — ~8 examples × 6
-classes × 128 floats ≈ 25 KB/user, so 1k users ≈ 25 MB: fits any free tier.
-Needs auth (passkey or email magic link — Cloudflare D1 + a Worker, or
-Supabase free tier which bundles auth + Postgres and is the faster path
-despite being a second vendor). Not worth building before there's demand;
-IndexedDB survives normal browsing on the same device.
+**Cross-device profile sync**: designed in `docs/accounts-plan.md` (OAuth +
+Workers + D1, opt-in, embeddings-only) and now **code-complete in `worker/`
+but deploy-gated on owner credentials** — see accounts-plan §9 for the
+go-live runbook. Until that runbook runs, nothing here deploys and the static
+site is unchanged (the sync UI only exists when `VITE_SYNC_API_URL` is set at
+build time). Profile backup/transfer already works with zero backend via the
+Teach panel's export/import file (accounts plan Phase 0).
 
 **Server-side inference (optional later phase, designed only)**: today's
 model is 1.5 MB / 2.3 ms in-browser, so an inference API has negative value.

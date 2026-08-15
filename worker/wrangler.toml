@@ -1,0 +1,29 @@
+# Cyborg Drum Machine accounts/sync API (accounts plan Phase 1).
+#
+# Local dev + tests need no Cloudflare account: `npm run dev` runs workerd with
+# a local SQLite-backed D1, and `npm test` uses @cloudflare/vitest-pool-workers.
+# Owner go-live steps (real D1 id, OAuth secrets): docs/accounts-plan.md §9.
+
+name = "cyborg-drum-machine-api"
+main = "src/index.ts"
+# Keep ≤ the workerd bundled with the pinned wrangler CLI (4.85.0, workerd
+# 1.20260424.x — the last wrangler line that runs on Node 20; see package.json).
+compatibility_date = "2026-04-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cyborg-drum-machine"
+# Placeholder — replaced by the owner after `wrangler d1 create` (plan §9).
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+# Origin of the web app, used for post-OAuth redirects and Origin checks on
+# state-changing requests. The cookie design (SameSite=Lax, no CORS) assumes
+# the worker is routed on the SAME origin as the app, under /api/*.
+APP_ORIGIN = "http://localhost:5173"
+
+# Secrets (owner, via `wrangler secret put`; never committed):
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+#   GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+# Test-only escape hatch (never set in production): FAKE_OAUTH = "1"

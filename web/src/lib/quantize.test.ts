@@ -77,7 +77,7 @@ describe('estimateTempo', () => {
 describe('quantizeHits', () => {
   it('reconstructs the pattern on the grid (metronome mode)', () => {
     const hits = gridHits(100, ROCK_BEAT, 8, 0.5);
-    const pat = quantizeHits(hits, { knownBpm: 100, origin: 0.5 });
+    const { pattern: pat } = quantizeHits(hits, { knownBpm: 100, origin: 0.5 });
     expect(pat.bpm).toBe(100);
     expect(pat.steps).toBe(16);
     expect(pat.grid.kick[0]).toBeGreaterThan(0);
@@ -91,7 +91,7 @@ describe('quantizeHits', () => {
 
   it('free mode reproduces relative structure', () => {
     const hits = gridHits(112, ROCK_BEAT, 5);
-    const pat = quantizeHits(hits);
+    const { pattern: pat } = quantizeHits(hits);
     // Kick anchored at step 0 after downbeat rotation.
     expect(pat.grid.kick[0]).toBeGreaterThan(0);
     // Snare backbeat lands mid-bar (allow the est. grid to be at 1x or 2x).
@@ -106,14 +106,50 @@ describe('quantizeHits', () => {
   });
 
   it('returns an empty pattern for no hits', () => {
-    const pat = quantizeHits([]);
+    const { pattern: pat, placements } = quantizeHits([]);
     expect(Object.values(pat.grid).flat().every((v) => v === 0)).toBe(true);
+    expect(placements).toEqual([]);
   });
 
   it('maps strength to velocity', () => {
     const hits = [hit(0.5, 'kick', 1), hit(0.8, 'kick', 0.2)];
-    const pat = quantizeHits(hits, { knownBpm: 100, origin: 0.5 });
+    const { pattern: pat } = quantizeHits(hits, { knownBpm: 100, origin: 0.5 });
     const vels = pat.grid.kick.filter((v) => v > 0);
     expect(Math.max(...vels)).toBeGreaterThan(Math.min(...vels));
+  });
+
+  it('returns one placement per hit, consistent with the grid (metronome mode)', () => {
+    const hits = gridHits(100, ROCK_BEAT, 8, 0.5);
+    const { pattern: pat, placements } = quantizeHits(hits, { knownBpm: 100, origin: 0.5 });
+    expect(placements).toHaveLength(hits.length);
+    placements.forEach((p, i) => {
+      expect(p.hitIndex).toBe(i);
+      expect(p.drum).toBe(hits[i].drum);
+      // The cell holds at least this hit's contribution (max of colliders).
+      expect(pat.grid[p.drum][p.step]).toBeGreaterThanOrEqual(p.velocity);
+    });
+    // Known placements from the fixture.
+    expect(placements[0]).toMatchObject({ drum: 'kick', step: 0 });
+    expect(placements[3]).toMatchObject({ drum: 'snare', step: 4 });
+    expect(placements[12]).toMatchObject({ drum: 'hihat_open', step: 14 });
+  });
+
+  it('placements follow the downbeat rotation in free mode', () => {
+    // Start on a hat so the kick (later in time) forces a rotation.
+    const beat: Array<[number, DrumClass]> = [
+      [0, 'hihat_closed'],
+      [1, 'kick'],
+      [5, 'snare'],
+      [9, 'kick'],
+    ];
+    const hits = gridHits(120, beat, 0);
+    const { pattern: pat, placements } = quantizeHits(hits);
+    // Kick anchored to step 0 by rotation…
+    const kickPlacement = placements.find((p) => p.hitIndex === 1)!;
+    expect(kickPlacement.step).toBe(0);
+    // …and every placement still points at a live cell of the rotated grid.
+    for (const p of placements) {
+      expect(pat.grid[p.drum][p.step]).toBeGreaterThanOrEqual(p.velocity);
+    }
   });
 });

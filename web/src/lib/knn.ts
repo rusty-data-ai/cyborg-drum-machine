@@ -1,5 +1,6 @@
 import type { DrumClass } from './types';
 import { DRUM_CLASSES } from './types';
+import { newUuid } from './uuid';
 
 /**
  * Cosine KNN over user-recorded example embeddings — the personalization layer.
@@ -13,6 +14,20 @@ export interface UserExample {
   embedding: Float32Array;
   modelVersion: string;
   createdAt: number;
+  /**
+   * Global-model softmax (MODEL_DRUM_CLASSES + 'other') captured when the
+   * example was taught. Optional: examples stored before this field existed
+   * simply lack it (IndexedDB stores are schemaless — no migration needed);
+   * they still vote in the KNN but are excluded from the leave-one-out stat.
+   */
+  modelProbs?: number[];
+  /**
+   * Client-generated global id for export/import and sync (integer `id`s are
+   * per-device autoincrements and cannot travel — docs/accounts-plan.md §3).
+   * Optional in the store: legacy rows gain one lazily on load, same
+   * no-migration mechanism as `modelProbs`. Always present after load().
+   */
+  uuid?: string;
 }
 
 const DB_NAME = 'beatbox';
@@ -67,6 +82,19 @@ export class KnnProfile {
       req.onsuccess = () => resolve(req.result as UserExample[]);
       req.onerror = () => reject(req.error);
     });
+    // Legacy rows (pre-export/sync) lack a uuid: assign one now and write it
+    // back, so every stored row has a stable global id from here on.
+    const legacy = all.filter((e) => !e.uuid);
+    if (legacy.length > 0) {
+      for (const e of legacy) e.uuid = newUuid();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        for (const e of legacy) store.put(e);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
     db.close();
     this.examples = all
       .filter((e) => e.modelVersion === modelVersion)
@@ -74,14 +102,51 @@ export class KnnProfile {
     this.normalized = this.examples.map((e) => normalize(e.embedding));
   }
 
-  async add(label: DrumClass, embedding: Float32Array, modelVersion: string): Promise<void> {
-    const example: Omit<UserExample, 'id'> = {
+  async add(
+    label: DrumClass,
+    embedding: Float32Array,
+    modelVersion: string,
+    modelProbs?: number[],
+  ): Promise<void> {
+    await this.addRow({
+      uuid: newUuid(),
       label,
       // Store as plain array for structured-clone friendliness across browsers.
       embedding: Array.from(embedding) as unknown as Float32Array,
       modelVersion,
       createdAt: Date.now(),
-    };
+      ...(modelProbs ? { modelProbs: [...modelProbs] } : {}),
+    });
+  }
+
+  /**
+   * Insert externally sourced examples (profile-file import, account sync)
+   * with their original uuid/createdAt/modelProbs. Local integer ids are
+   * assigned fresh by IndexedDB, as always. Caller dedups (planMerge).
+   */
+  async importExamples(
+    items: readonly {
+      uuid: string;
+      label: DrumClass;
+      embedding: readonly number[];
+      modelProbs?: number[];
+      createdAt: number;
+    }[],
+    modelVersion: string,
+  ): Promise<void> {
+    for (const item of items) {
+      await this.addRow({
+        uuid: item.uuid,
+        label: item.label,
+        embedding: [...item.embedding] as unknown as Float32Array,
+        modelVersion,
+        createdAt: item.createdAt,
+        ...(item.modelProbs ? { modelProbs: [...item.modelProbs] } : {}),
+      });
+    }
+  }
+
+  private async addRow(example: Omit<UserExample, 'id'>): Promise<void> {
     const db = await openDb();
     const id = await new Promise<number>((resolve, reject) => {
       const req = db.transaction(STORE, 'readwrite').objectStore(STORE).add(example);
@@ -89,9 +154,20 @@ export class KnnProfile {
       req.onerror = () => reject(req.error);
     });
     db.close();
-    const stored = { ...example, id, embedding: new Float32Array(embedding) };
+    const stored = {
+      ...example,
+      id,
+      embedding: new Float32Array(example.embedding),
+    };
     this.examples.push(stored);
     this.normalized.push(normalize(stored.embedding));
+  }
+
+  /** Remove rows by their global uuid (sync tombstones). */
+  async removeByUuids(uuids: readonly string[]): Promise<void> {
+    const want = new Set(uuids);
+    const ids = this.examples.filter((e) => e.uuid && want.has(e.uuid)).map((e) => e.id);
+    for (const id of ids) await this.remove(id);
   }
 
   async remove(id: number): Promise<void> {
